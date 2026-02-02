@@ -53,6 +53,11 @@ export interface NotePlan {
   reminderTime: string;
   status?: 'Pending' | 'Completed';
   createdDate?: string;
+  isRecurring?: boolean;
+  recurrenceType?: 'weekly' | 'monthly' | 'yearly';
+  reminderEnabled?: boolean;
+  reminderCount?: number;
+  reminderAdvanceDays?: number;
 }
 
 async function fetchAPI(endpoint: string, options: RequestInit = {}) {

@@ -18,6 +18,11 @@ export default function NotesPage() {
     description: '',
     reminderDate: '',
     reminderTime: '',
+    isRecurring: false,
+    recurrenceType: 'monthly' as 'weekly' | 'monthly' | 'yearly',
+    reminderEnabled: false,
+    reminderCount: 1,
+    reminderAdvanceDays: 7,
   });
   const [filterStatus, setFilterStatus] = useState<'All' | 'Pending' | 'Completed'>('All');
 
@@ -37,13 +42,48 @@ export default function NotesPage() {
     }
   };
 
+  const getMaxReminderDays = () => {
+    if (!formData.isRecurring) return 30;
+    switch (formData.recurrenceType) {
+      case 'weekly':
+        return 3;
+      case 'monthly':
+        return 15;
+      case 'yearly':
+        return 180;
+      default:
+        return 7;
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
     try {
       setIsSubmitting(true);
+      if (formData.reminderEnabled) {
+        const maxDays = getMaxReminderDays();
+        if (formData.reminderAdvanceDays > maxDays) {
+          setError(`Reminder advance days cannot exceed ${maxDays} days for ${formData.isRecurring ? formData.recurrenceType : 'non-recurring'} notes`);
+          return;
+        }
+        if (!formData.isRecurring) {
+          setError('Reminders can only be enabled for recurring notes');
+          return;
+        }
+      }
       if (editingNote?.id) {
-        await notesAPI.update(editingNote.id, formData);
+        await notesAPI.update(editingNote.id, {
+          title: formData.title,
+          description: formData.description,
+          reminderDate: formData.reminderDate,
+          reminderTime: formData.reminderTime,
+          isRecurring: formData.isRecurring,
+          recurrenceType: formData.isRecurring ? formData.recurrenceType : undefined,
+          reminderEnabled: formData.isRecurring && formData.reminderEnabled,
+          reminderCount: formData.isRecurring && formData.reminderEnabled ? formData.reminderCount : undefined,
+          reminderAdvanceDays: formData.isRecurring && formData.reminderEnabled ? formData.reminderAdvanceDays : undefined,
+        });
       } else {
         await notesAPI.create({
           title: formData.title,
@@ -51,11 +91,26 @@ export default function NotesPage() {
           reminderDate: formData.reminderDate,
           reminderTime: formData.reminderTime,
           status: 'Pending',
+          isRecurring: formData.isRecurring,
+          recurrenceType: formData.isRecurring ? formData.recurrenceType : undefined,
+          reminderEnabled: formData.isRecurring && formData.reminderEnabled,
+          reminderCount: formData.isRecurring && formData.reminderEnabled ? formData.reminderCount : undefined,
+          reminderAdvanceDays: formData.isRecurring && formData.reminderEnabled ? formData.reminderAdvanceDays : undefined,
         });
       }
       setShowForm(false);
       setEditingNote(null);
-      setFormData({ title: '', description: '', reminderDate: '', reminderTime: '' });
+      setFormData({
+        title: '',
+        description: '',
+        reminderDate: '',
+        reminderTime: '',
+        isRecurring: false,
+        recurrenceType: 'monthly',
+        reminderEnabled: false,
+        reminderCount: 1,
+        reminderAdvanceDays: 7,
+      });
       loadNotes();
     } catch (err: any) {
       setError(err.message || 'Failed to save note/plan');
@@ -71,6 +126,11 @@ export default function NotesPage() {
       description: note.description,
       reminderDate: note.reminderDate.split('T')[0],
       reminderTime: note.reminderTime || '',
+      isRecurring: note.isRecurring || false,
+      recurrenceType: note.recurrenceType || 'monthly',
+      reminderEnabled: note.reminderEnabled || false,
+      reminderCount: note.reminderCount || 1,
+      reminderAdvanceDays: note.reminderAdvanceDays || 7,
     });
     setShowForm(true);
   };
@@ -140,6 +200,8 @@ export default function NotesPage() {
       heading: 'English',
       lines: [
         'Create notes or plans with reminder date and time.',
+        'Recurring notes can repeat weekly, monthly, or yearly.',
+        'Reminders can be enabled only for recurring notes.',
         'Use filters to view All, Pending, or Completed.',
         'Mark items as Complete when finished.',
         'Edit or delete items from the card actions.'
@@ -149,12 +211,15 @@ export default function NotesPage() {
       heading: 'العربية',
       lines: [
         'أنشئ ملاحظات أو خطط مع تاريخ ووقت التذكير.',
+        'الملاحظات المتكررة تتكرر أسبوعيًا أو شهريًا أو سنويًا.',
+        'التنبيهات متاحة فقط للملاحظات المتكررة.',
         'استخدم الفلاتر لعرض الكل أو المعلقة أو المكتملة.',
         'قم بوضع الحالة مكتمل عند الانتهاء.',
         'يمكنك تعديل أو حذف العناصر من أزرار البطاقة.'
       ]
     }
   ];
+  const maxReminderDays = getMaxReminderDays();
 
   return (
     <>
@@ -183,7 +248,17 @@ export default function NotesPage() {
           onClick={() => {
             setShowForm(true);
             setEditingNote(null);
-            setFormData({ title: '', description: '', reminderDate: '', reminderTime: '' });
+            setFormData({
+              title: '',
+              description: '',
+              reminderDate: '',
+              reminderTime: '',
+              isRecurring: false,
+              recurrenceType: 'monthly',
+              reminderEnabled: false,
+              reminderCount: 1,
+              reminderAdvanceDays: 7,
+            });
           }}
           disabled={isSubmitting || !!actionInFlight}
           className={`w-full sm:w-auto px-5 sm:px-6 py-2.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-xl shadow-lg transition-all duration-200 font-semibold flex items-center justify-center gap-2 ${
@@ -304,6 +379,107 @@ export default function NotesPage() {
                 />
               </div>
             </div>
+
+            {/* Recurring Options */}
+            <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formData.isRecurring}
+                  onChange={(e) => {
+                    const isRecurring = e.target.checked;
+                    setFormData({
+                      ...formData,
+                      isRecurring,
+                      reminderEnabled: isRecurring ? formData.reminderEnabled : false,
+                    });
+                  }}
+                  className="w-5 h-5 text-primary-600 rounded focus:ring-primary-500"
+                />
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Make this a recurring note/plan
+                </span>
+              </label>
+
+              {formData.isRecurring && (
+                <div className="mt-4 space-y-4 pl-8">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Recurrence Type
+                    </label>
+                    <select
+                      value={formData.recurrenceType}
+                      onChange={(e) => {
+                        const newType = e.target.value as 'weekly' | 'monthly' | 'yearly';
+                        setFormData({
+                          ...formData,
+                          recurrenceType: newType,
+                          reminderAdvanceDays: Math.min(formData.reminderAdvanceDays, getMaxReminderDays()),
+                        });
+                      }}
+                      className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="yearly">Yearly</option>
+                    </select>
+                  </div>
+
+                  {/* Reminder Options */}
+                  <div className="bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+                    <label className="flex items-center gap-3 cursor-pointer mb-4">
+                      <input
+                        type="checkbox"
+                        checked={formData.reminderEnabled}
+                        onChange={(e) => setFormData({ ...formData, reminderEnabled: e.target.checked })}
+                        className="w-5 h-5 text-primary-600 rounded focus:ring-primary-500"
+                      />
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Enable reminders
+                      </span>
+                    </label>
+
+                    {formData.reminderEnabled && (
+                      <div className="space-y-4 pl-8">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Number of Reminders
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="5"
+                            value={formData.reminderCount}
+                            onChange={(e) => setFormData({ ...formData, reminderCount: parseInt(e.target.value) || 1 })}
+                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                          />
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">How many times to remind you</p>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                            Advance Days (Max: {maxReminderDays} days)
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max={maxReminderDays}
+                            value={formData.reminderAdvanceDays}
+                            onChange={(e) => {
+                              const days = parseInt(e.target.value) || 1;
+                              setFormData({ ...formData, reminderAdvanceDays: Math.min(days, maxReminderDays) });
+                            }}
+                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                          />
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            How many days before reminder to notify you
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="flex space-x-3">
               <button
                 type="submit"
@@ -317,7 +493,17 @@ export default function NotesPage() {
                 onClick={() => {
                   setShowForm(false);
                   setEditingNote(null);
-                  setFormData({ title: '', description: '', reminderDate: '', reminderTime: '' });
+                  setFormData({
+                    title: '',
+                    description: '',
+                    reminderDate: '',
+                    reminderTime: '',
+                    isRecurring: false,
+                    recurrenceType: 'monthly',
+                    reminderEnabled: false,
+                    reminderCount: 1,
+                    reminderAdvanceDays: 7,
+                  });
                 }}
                 className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-400 dark:hover:bg-gray-500"
               >

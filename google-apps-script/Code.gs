@@ -233,7 +233,19 @@ function getSheet(sheetName) {
         sheet.getRange(1, 1, 1, 2).setValues([['Date', 'Balance']]);
         break;
       case SHEETS.NOTES_PLANS:
-        sheet.getRange(1, 1, 1, 6).setValues([['Title', 'Description', 'Reminder Date', 'Reminder Time', 'Status', 'Created Date']]);
+        sheet.getRange(1, 1, 1, 11).setValues([[
+          'Title',
+          'Description',
+          'Reminder Date',
+          'Reminder Time',
+          'Status',
+          'Created Date',
+          'Is Recurring',
+          'Recurrence Type',
+          'Reminder Enabled',
+          'Reminder Count',
+          'Reminder Advance Days'
+        ]]);
         break;
     }
   }
@@ -281,7 +293,19 @@ function resetHeaders(sheetName) {
       sheet.getRange(1, 1, 1, 2).setValues([['Date', 'Balance']]);
       break;
     case SHEETS.NOTES_PLANS:
-      sheet.getRange(1, 1, 1, 6).setValues([['Title', 'Description', 'Reminder Date', 'Reminder Time', 'Status', 'Created Date']]);
+      sheet.getRange(1, 1, 1, 11).setValues([[
+        'Title',
+        'Description',
+        'Reminder Date',
+        'Reminder Time',
+        'Status',
+        'Created Date',
+        'Is Recurring',
+        'Recurrence Type',
+        'Reminder Enabled',
+        'Reminder Count',
+        'Reminder Advance Days'
+      ]]);
       break;
     default:
       throw new Error('Unknown sheet name: ' + sheetName);
@@ -632,7 +656,7 @@ function updateCashBalanceFromExpense(amount) {
 
 function getNotesPlans() {
   const sheet = getSheet(SHEETS.NOTES_PLANS);
-  const rows = getDataRows(sheet, 6);
+  const rows = getDataRows(sheet, 11);
   
   return rows.map((row, index) => ({
     id: `note_${index + 1}`,
@@ -641,7 +665,12 @@ function getNotesPlans() {
     reminderDate: row[2] ? new Date(row[2]).toISOString().split('T')[0] : '',
     reminderTime: row[3] || '',
     status: row[4] || 'Pending',
-    createdDate: row[5] ? new Date(row[5]).toISOString() : new Date().toISOString()
+    createdDate: row[5] ? new Date(row[5]).toISOString() : new Date().toISOString(),
+    isRecurring: row[6] === true || row[6] === 'TRUE',
+    recurrenceType: row[7] || '',
+    reminderEnabled: row[8] === true || row[8] === 'TRUE',
+    reminderCount: parseInt(row[9]) || 1,
+    reminderAdvanceDays: parseInt(row[10]) || 0
   }));
 }
 
@@ -654,7 +683,12 @@ function createNotePlan(data) {
     reminderDate,
     data.reminderTime || '',
     data.status || 'Pending',
-    new Date()
+    new Date(),
+    data.isRecurring || false,
+    data.recurrenceType || '',
+    data.reminderEnabled || false,
+    data.reminderCount || 1,
+    data.reminderAdvanceDays || 0
   ]);
   
   // Check reminders
@@ -673,6 +707,11 @@ function updateNotePlan(id, data) {
   if (data.reminderDate !== undefined) sheet.getRange(row, 3).setValue(new Date(data.reminderDate));
   if (data.reminderTime !== undefined) sheet.getRange(row, 4).setValue(data.reminderTime);
   if (data.status !== undefined) sheet.getRange(row, 5).setValue(data.status);
+  if (data.isRecurring !== undefined) sheet.getRange(row, 7).setValue(data.isRecurring);
+  if (data.recurrenceType !== undefined) sheet.getRange(row, 8).setValue(data.recurrenceType);
+  if (data.reminderEnabled !== undefined) sheet.getRange(row, 9).setValue(data.reminderEnabled);
+  if (data.reminderCount !== undefined) sheet.getRange(row, 10).setValue(data.reminderCount);
+  if (data.reminderAdvanceDays !== undefined) sheet.getRange(row, 11).setValue(data.reminderAdvanceDays);
   
   return { success: true };
 }
@@ -685,10 +724,61 @@ function deleteNotePlan(id) {
 }
 
 function markNotePlanCompleted(id) {
-  const sheet = getSheet(SHEETS.NOTES_PLANS);
-  const rowIndex = parseInt(id.split('_')[1]);
-  sheet.getRange(rowIndex + 1, 5).setValue('Completed');
-  return { success: true };
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    return { success: false, error: 'System busy. Please try again.' };
+  }
+  try {
+    const sheet = getSheet(SHEETS.NOTES_PLANS);
+    const rowIndex = parseInt(id.split('_')[1]);
+    const row = rowIndex + 1;
+    const noteData = sheet.getRange(row, 1, 1, 11).getValues()[0];
+    const currentStatus = noteData[4] || 'Pending';
+    if (currentStatus === 'Completed') {
+      return { success: true, message: 'Already completed' };
+    }
+
+    sheet.getRange(row, 5).setValue('Completed');
+
+    const isRecurring = noteData[6] === true || noteData[6] === 'TRUE';
+    if (isRecurring) {
+      const recurrenceType = noteData[7] || 'monthly';
+      const nextReminderDate = addRecurringDate(noteData[2], recurrenceType);
+      const nextDateKey = Utilities.formatDate(nextReminderDate, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+      const title = noteData[0] || '';
+
+      const lastRow = sheet.getLastRow();
+      let duplicateExists = false;
+      if (lastRow >= 2) {
+        const rows = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+        duplicateExists = rows.some(r => {
+          const rowTitle = r[0] || '';
+          const rowDate = r[2] ? Utilities.formatDate(new Date(r[2]), Session.getScriptTimeZone(), 'yyyy-MM-dd') : '';
+          return rowTitle === title && rowDate === nextDateKey;
+        });
+      }
+
+      if (!duplicateExists) {
+        sheet.appendRow([
+          noteData[0], // Title
+          noteData[1], // Description
+          nextReminderDate, // Reminder Date
+          noteData[3] || '', // Reminder Time
+          'Pending', // Status
+          new Date(), // Created Date
+          noteData[6] || false, // Is Recurring
+          noteData[7] || '', // Recurrence Type
+          noteData[8] || false, // Reminder Enabled
+          noteData[9] || 1, // Reminder Count
+          noteData[10] || 0 // Reminder Advance Days
+        ]);
+      }
+    }
+
+    return { success: true };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ========== DASHBOARD ==========
@@ -738,11 +828,24 @@ function checkNoteReminders() {
     if (note.status === 'Completed') return;
     
     const reminderDateTime = new Date(`${note.reminderDate}T${note.reminderTime || '00:00'}`);
-    const hoursUntilReminder = (reminderDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
-    
-    // Send reminder if within 1 hour of reminder time
-    if (hoursUntilReminder >= 0 && hoursUntilReminder <= 1) {
-      sendNoteReminderEmail(note);
+    const daysUntilReminder = Math.ceil((reminderDateTime.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    const reminderEnabled = note.reminderEnabled === true;
+    const reminderCount = note.reminderCount || 1;
+    const reminderAdvanceDays = note.reminderAdvanceDays || 0;
+
+    if (!reminderEnabled) return;
+
+    // Send reminders in advance days window (once per day)
+    if (daysUntilReminder >= 0 && daysUntilReminder <= reminderAdvanceDays) {
+      const index = reminderAdvanceDays - daysUntilReminder; // 0..advanceDays
+      if (index < reminderCount) {
+        const cache = CacheService.getScriptCache();
+        const cacheKey = `note_reminder_${note.title}_${note.reminderDate}_${index}`;
+        if (!cache.get(cacheKey)) {
+          sendNoteReminderEmail(note);
+          cache.put(cacheKey, '1', 60 * 60 * 12); // 12 hours
+        }
+      }
     }
   });
 }

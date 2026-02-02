@@ -4,6 +4,9 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'OnGoing - Personal Finance Tracker',
   description: 'Track your finances, bills, expenses, and more with OnGoing - Your comprehensive financial management solution',
+  icons: {
+    icon: '/favicon.svg',
+  },
 };
 
 export default function RootLayout({
