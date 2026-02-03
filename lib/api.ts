@@ -358,6 +358,17 @@ export const notesAPI = {
     return fetchWithCache<NotePlan[]>(CACHE_KEYS.NOTES, '?action=getNotesPlans', { method: 'POST' });
   },
   
+  /**
+   * Get notes from getAllData cache if available (faster initial load)
+   */
+  getAllFromCache: (): NotePlan[] | null => {
+    const cached = getFromCache<AllData>(CACHE_KEYS.ALL_DATA);
+    if (cached.data && cached.data.notesPlans) {
+      return cached.data.notesPlans;
+    }
+    return null;
+  },
+  
   create: async (note: NotePlan) => {
     const result = await fetchAPI('?action=createNotePlan', { 
       method: 'POST', 
@@ -365,6 +376,7 @@ export const notesAPI = {
     });
     invalidateCache(CACHE_KEYS.NOTES);
     invalidateCache(CACHE_KEYS.ALL_DATA);
+    invalidateCache(CACHE_KEYS.DASHBOARD);
     return result;
   },
   
@@ -375,6 +387,7 @@ export const notesAPI = {
     });
     invalidateCache(CACHE_KEYS.NOTES);
     invalidateCache(CACHE_KEYS.ALL_DATA);
+    invalidateCache(CACHE_KEYS.DASHBOARD);
     return result;
   },
   
@@ -382,6 +395,7 @@ export const notesAPI = {
     const result = await fetchAPI(`?action=deleteNotePlan&id=${id}`, { method: 'POST' });
     invalidateCache(CACHE_KEYS.NOTES);
     invalidateCache(CACHE_KEYS.ALL_DATA);
+    invalidateCache(CACHE_KEYS.DASHBOARD);
     return result;
   },
   
@@ -389,19 +403,31 @@ export const notesAPI = {
     const result = await fetchAPI(`?action=markNotePlanCompleted&id=${id}`, { method: 'POST' });
     invalidateCache(CACHE_KEYS.NOTES);
     invalidateCache(CACHE_KEYS.ALL_DATA);
+    invalidateCache(CACHE_KEYS.DASHBOARD);
     return result;
   },
 };
 
 // ========== Dashboard API ==========
 
+/**
+ * Dashboard summary now includes all data including notes
+ */
+export interface DashboardSummary {
+  banks: Bank[];
+  bills: MonthlyBill[];
+  expenses: Expense[];
+  cashBalance: CashBalance;
+  notesPlans: NotePlan[];
+}
+
 export const dashboardAPI = {
-  getSummary: async () => {
-    return cachedFetch(CACHE_KEYS.DASHBOARD, '?action=getDashboardSummary');
+  getSummary: async (): Promise<DashboardSummary> => {
+    return cachedFetch<DashboardSummary>(CACHE_KEYS.DASHBOARD, '?action=getDashboardSummary');
   },
   
-  getSummaryWithStatus: async () => {
-    return fetchWithCache(CACHE_KEYS.DASHBOARD, '?action=getDashboardSummary', { method: 'POST' });
+  getSummaryWithStatus: async (): Promise<{ data: DashboardSummary; fromCache: boolean }> => {
+    return fetchWithCache<DashboardSummary>(CACHE_KEYS.DASHBOARD, '?action=getDashboardSummary', { method: 'POST' });
   },
 };
 

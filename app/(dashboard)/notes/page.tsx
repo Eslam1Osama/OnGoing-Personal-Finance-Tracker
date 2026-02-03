@@ -9,6 +9,7 @@ import { validateNoteForm, sanitizeInput } from '@/lib/validation';
 export default function NotesPage() {
   const [notes, setNotes] = useState<NotePlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [actionInFlight, setActionInFlight] = useState<string | null>(null);
@@ -32,11 +33,32 @@ export default function NotesPage() {
     loadNotes();
   }, []);
 
+  /**
+   * Optimized data loading:
+   * 1. First, try to get cached data for instant display
+   * 2. Then fetch fresh data in the background
+   */
   const loadNotes = async () => {
     try {
-      setIsLoading(true);
-      const data = await notesAPI.getAll();
-      setNotes(Array.isArray(data) ? data : []);
+      // Try to get cached data first for instant display
+      const cachedNotes = notesAPI.getAllFromCache();
+      if (cachedNotes && cachedNotes.length > 0) {
+        setNotes(cachedNotes);
+        setIsLoading(false);
+        // Fetch fresh data in background
+        setIsRefreshing(true);
+        try {
+          const freshData = await notesAPI.getAll();
+          setNotes(Array.isArray(freshData) ? freshData : []);
+        } finally {
+          setIsRefreshing(false);
+        }
+      } else {
+        // No cache, fetch normally
+        setIsLoading(true);
+        const data = await notesAPI.getAll();
+        setNotes(Array.isArray(data) ? data : []);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to load notes');
     } finally {
@@ -245,7 +267,18 @@ export default function NotesPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">Notes & Plans</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">Notes & Plans</h1>
+            {isRefreshing && (
+              <div className="flex items-center gap-1 text-xs text-primary-600 dark:text-primary-400">
+                <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span className="hidden sm:inline">Syncing...</span>
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full sm:w-auto">
         <button

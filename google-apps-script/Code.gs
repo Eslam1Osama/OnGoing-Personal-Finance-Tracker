@@ -870,12 +870,17 @@ function checkDuplicateNote(sheet, title, reminderDate) {
 
 // ========== DASHBOARD ==========
 
+/**
+ * Get dashboard summary with all data including notes
+ * Uses the same cache as getAllData for consistency
+ */
 function getDashboardSummaryCached() {
   return getCachedData(CACHE_KEYS.ALL_DATA, () => ({
     banks: getBanksFromSheet(),
     cashBalance: getCashBalanceFromSheet(),
     bills: getBillsFromSheet(),
-    expenses: getExpensesFromSheet()
+    expenses: getExpensesFromSheet(),
+    notesPlans: getNotesPlansFromSheet()
   }));
 }
 
