@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { billsAPI, MonthlyBill } from '@/lib/api';
 import InfoModal from '@/components/InfoModal';
+import FormModal from '@/components/FormModal';
+import { validateBillForm, sanitizeInput } from '@/lib/validation';
 
 export default function BillsPage() {
   const [bills, setBills] = useState<MonthlyBill[]>([]);
@@ -62,46 +64,55 @@ export default function BillsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
+    
+    // Sanitize inputs
+    const sanitizedData = {
+      billName: sanitizeInput(formData.billName),
+      amount: formData.amount.trim(),
+      dueDate: formData.dueDate,
+      notes: sanitizeInput(formData.notes),
+      isRecurring: formData.isRecurring,
+      recurrenceType: formData.recurrenceType,
+      reminderEnabled: formData.reminderEnabled,
+      reminderCount: formData.reminderCount,
+      reminderAdvanceDays: formData.reminderAdvanceDays,
+    };
+    
+    // Validate form
+    const validation = validateBillForm(sanitizedData);
+    if (!validation.isValid) {
+      setError(validation.error || 'Please check your input');
+      return;
+    }
+    
     try {
       setIsSubmitting(true);
-      // Validate reminder settings if enabled
-      if (formData.reminderEnabled) {
-        const maxDays = getMaxReminderDays();
-        if (formData.reminderAdvanceDays > maxDays) {
-          setError(`Reminder advance days cannot exceed ${maxDays} days for ${formData.isRecurring ? formData.recurrenceType : 'non-recurring'} bills`);
-          return;
-        }
-        // Ensure reminder is only enabled for recurring bills
-        if (!formData.isRecurring) {
-          setError('Reminders can only be enabled for recurring bills');
-          return;
-        }
-      }
+      setError('');
 
       if (editingBill?.id) {
         await billsAPI.update(editingBill.id, {
-          billName: formData.billName,
-          amount: parseFloat(formData.amount),
-          dueDate: formData.dueDate,
-          notes: formData.notes || undefined,
-          isRecurring: formData.isRecurring,
-          recurrenceType: formData.isRecurring ? formData.recurrenceType : undefined,
-          reminderEnabled: formData.isRecurring && formData.reminderEnabled,
-          reminderCount: formData.isRecurring && formData.reminderEnabled ? formData.reminderCount : undefined,
-          reminderAdvanceDays: formData.isRecurring && formData.reminderEnabled ? formData.reminderAdvanceDays : undefined,
+          billName: sanitizedData.billName,
+          amount: parseFloat(sanitizedData.amount),
+          dueDate: sanitizedData.dueDate,
+          notes: sanitizedData.notes || undefined,
+          isRecurring: sanitizedData.isRecurring,
+          recurrenceType: sanitizedData.isRecurring ? sanitizedData.recurrenceType : undefined,
+          reminderEnabled: sanitizedData.isRecurring && sanitizedData.reminderEnabled,
+          reminderCount: sanitizedData.isRecurring && sanitizedData.reminderEnabled ? sanitizedData.reminderCount : undefined,
+          reminderAdvanceDays: sanitizedData.isRecurring && sanitizedData.reminderEnabled ? sanitizedData.reminderAdvanceDays : undefined,
         });
       } else {
         await billsAPI.create({
-          billName: formData.billName,
-          amount: parseFloat(formData.amount),
-          dueDate: formData.dueDate,
-          notes: formData.notes || undefined,
+          billName: sanitizedData.billName,
+          amount: parseFloat(sanitizedData.amount),
+          dueDate: sanitizedData.dueDate,
+          notes: sanitizedData.notes || undefined,
           status: 'Unpaid',
-          isRecurring: formData.isRecurring,
-          recurrenceType: formData.isRecurring ? formData.recurrenceType : undefined,
-          reminderEnabled: formData.isRecurring && formData.reminderEnabled,
-          reminderCount: formData.isRecurring && formData.reminderEnabled ? formData.reminderCount : undefined,
-          reminderAdvanceDays: formData.isRecurring && formData.reminderEnabled ? formData.reminderAdvanceDays : undefined,
+          isRecurring: sanitizedData.isRecurring,
+          recurrenceType: sanitizedData.isRecurring ? sanitizedData.recurrenceType : undefined,
+          reminderEnabled: sanitizedData.isRecurring && sanitizedData.reminderEnabled,
+          reminderCount: sanitizedData.isRecurring && sanitizedData.reminderEnabled ? sanitizedData.reminderCount : undefined,
+          reminderAdvanceDays: sanitizedData.isRecurring && sanitizedData.reminderEnabled ? sanitizedData.reminderAdvanceDays : undefined,
         });
       }
       setShowForm(false);
@@ -369,18 +380,34 @@ export default function BillsPage() {
         </div>
       </div>
 
-      {/* Add/Edit Form */}
-      {showForm && (
-        <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-xl p-4 sm:p-6 mb-6 border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white mb-5 sm:mb-6 flex items-center gap-2">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center shadow-md">
-              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            {editingBill ? 'Edit Bill' : 'Add New Bill'}
-          </h2>
-          <form onSubmit={handleSubmit} className="space-y-5">
+      {/* Add/Edit Form Modal */}
+      <FormModal
+        isOpen={showForm}
+        onClose={() => {
+          setShowForm(false);
+          setEditingBill(null);
+          setError('');
+          setFormData({
+            billName: '',
+            amount: '',
+            dueDate: '',
+            notes: '',
+            isRecurring: false,
+            recurrenceType: 'monthly',
+            reminderEnabled: false,
+            reminderCount: 1,
+            reminderAdvanceDays: 7,
+          });
+        }}
+        title={editingBill ? 'Edit Bill' : 'Add New Bill'}
+        icon={
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        }
+        maxWidth="xl"
+      >
+        <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 Bill Name <span className="text-red-500">*</span>
@@ -571,19 +598,30 @@ export default function BillsPage() {
                 onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
               />
             </div>
-            <div className="flex flex-col sm:flex-row gap-3 pt-4">
+            <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="flex-1 px-6 py-2.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg shadow-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed hover:from-primary-700 hover:to-primary-800 hover:shadow-xl"
+                className="flex-1 px-6 py-2.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg shadow-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed hover:from-primary-700 hover:to-primary-800 hover:shadow-xl flex items-center justify-center gap-2"
               >
-                {editingBill ? 'Update Bill' : 'Create Bill'}
+                {isSubmitting ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  editingBill ? 'Update Bill' : 'Create Bill'
+                )}
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setShowForm(false);
                   setEditingBill(null);
+                  setError('');
                   setFormData({
                     billName: '',
                     amount: '',
@@ -602,8 +640,7 @@ export default function BillsPage() {
               </button>
             </div>
           </form>
-        </div>
-      )}
+      </FormModal>
 
       {/* Bills List */}
       <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700">

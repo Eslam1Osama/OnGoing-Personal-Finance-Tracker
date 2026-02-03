@@ -1,4 +1,6 @@
 /** @type {import('tailwindcss').Config} */
+const plugin = require('tailwindcss/plugin');
+
 module.exports = {
   content: [
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
@@ -28,5 +30,19 @@ module.exports = {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // Custom plugin for hover-only-on-capable-devices
+    plugin(function({ addVariant }) {
+      // `can-hover:` - Only applies styles on devices that support hover (mouse/trackpad)
+      // Usage: can-hover:bg-blue-500 (will only apply on desktop, not touch)
+      addVariant('can-hover', '@media (hover: hover) and (pointer: fine)');
+      
+      // `touch:` - Only applies styles on touch devices
+      // Usage: touch:scale-95 (will only apply on touch devices when active)
+      addVariant('touch', '@media (hover: none) or (pointer: coarse)');
+      
+      // `touch-active:` - Active state on touch devices
+      addVariant('touch-active', '@media (hover: none) { &:active }');
+    }),
+  ],
 }

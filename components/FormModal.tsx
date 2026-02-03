@@ -2,31 +2,37 @@
 
 import React, { useEffect, useCallback, useRef, useState } from 'react';
 
-interface InfoSection {
-  heading: string;
-  lines: string[];
-}
-
-interface InfoModalProps {
+interface FormModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
-  sections: InfoSection[];
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
 }
 
 /**
- * InfoModal - A premium modal component for displaying information
+ * FormModal - A premium modal component for forms
  * 
  * Features:
  * - Modern glass-morphism design with gradients
  * - Smooth entrance/exit animations
  * - Accessible with ARIA attributes and keyboard navigation
  * - Click-outside-to-close and ESC key support
- * - Proper focus management (no stuck button highlights)
+ * - Responsive with configurable max-width
  * - Beautiful backdrop blur effect
+ * - Proper focus management (no stuck button highlights)
+ * - Mobile-optimized scrolling behavior
  */
-export default function InfoModal({ isOpen, onClose, title, sections }: InfoModalProps) {
-  // Ref to the modal container for focus management
+export default function FormModal({
+  isOpen,
+  onClose,
+  title,
+  icon,
+  children,
+  maxWidth = 'lg',
+}: FormModalProps) {
+  // Ref to the modal container for focus trapping
   const modalRef = useRef<HTMLDivElement>(null);
   const [isAnimating, setIsAnimating] = useState(false);
 
@@ -125,6 +131,15 @@ export default function InfoModal({ isOpen, onClose, title, sections }: InfoModa
 
   if (!isOpen) return null;
 
+  // Max width classes mapping
+  const maxWidthClasses = {
+    sm: 'max-w-sm',
+    md: 'max-w-md',
+    lg: 'max-w-lg',
+    xl: 'max-w-xl',
+    '2xl': 'max-w-2xl',
+  };
+
   return (
     <div
       className={`fixed inset-0 z-[100] flex items-start sm:items-center justify-center p-0 sm:p-4 transition-all duration-300 ${
@@ -133,7 +148,7 @@ export default function InfoModal({ isOpen, onClose, title, sections }: InfoModa
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
-      aria-label={title}
+      aria-labelledby="form-modal-title"
     >
       {/* Backdrop with blur */}
       <div className="absolute inset-0 bg-black/70 backdrop-blur-md" />
@@ -142,33 +157,38 @@ export default function InfoModal({ isOpen, onClose, title, sections }: InfoModa
       <div
         ref={modalRef}
         tabIndex={-1}
-        className={`relative w-full h-full sm:h-auto max-w-2xl bg-gradient-to-br from-white via-white to-gray-50 dark:from-gray-800 dark:via-gray-850 dark:to-gray-900 sm:rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.8)] border-0 sm:border border-gray-200/80 dark:border-gray-700/80 max-h-full sm:max-h-[90vh] flex flex-col outline-none transform transition-all duration-300 ${
+        className={`relative w-full h-full sm:h-auto ${maxWidthClasses[maxWidth]} bg-gradient-to-br from-white via-white to-gray-50 dark:from-gray-800 dark:via-gray-850 dark:to-gray-900 sm:rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] dark:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.8)] border-0 sm:border border-gray-200/80 dark:border-gray-700/80 max-h-full sm:max-h-[90vh] flex flex-col outline-none transform transition-all duration-300 ${
           isAnimating ? 'translate-y-0 scale-100' : 'translate-y-8 scale-95'
         }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Decorative gradient line at top */}
-        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-primary-600 to-purple-600 sm:rounded-t-2xl" />
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary-500 via-primary-600 to-primary-700 sm:rounded-t-2xl" />
         
         {/* Modal Header */}
         <div className="flex items-center justify-between px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 dark:border-gray-700/80 flex-shrink-0 bg-gradient-to-r from-gray-50/50 to-transparent dark:from-gray-800/50 dark:to-transparent">
           <div className="flex items-center gap-3 sm:gap-4">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-blue-500 to-primary-600 rounded-xl sm:rounded-2xl flex items-center justify-center shadow-lg shadow-primary-500/30">
-              <svg className="w-5 h-5 sm:w-6 sm:h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
+            {icon && (
+              <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl sm:rounded-2xl flex items-center justify-center shadow-lg shadow-primary-500/30">
+                {icon}
+              </div>
+            )}
             <div>
-              <h3 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">{title}</h3>
+              <h2
+                id="form-modal-title"
+                className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white"
+              >
+                {title}
+              </h2>
               <p className="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mt-0.5 hidden xs:block">
-                Learn how to use this feature
+                Fill in the details below
               </p>
             </div>
           </div>
           <button
             onClick={handleCloseButtonClick}
             className="p-2 sm:p-2.5 rounded-xl text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 bg-gray-100 dark:bg-gray-700/50 hover:bg-gray-200 dark:hover:bg-gray-600 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 shadow-sm"
-            aria-label="Close info"
+            aria-label="Close form"
             type="button"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -176,42 +196,10 @@ export default function InfoModal({ isOpen, onClose, title, sections }: InfoModa
             </svg>
           </button>
         </div>
-        
-        {/* Modal Body */}
-        <div className="px-4 sm:px-6 py-4 sm:py-5 space-y-5 overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600 scrollbar-track-transparent">
-          {sections.map((section, idx) => (
-            <div key={`${section.heading}-${idx}`} className="space-y-3">
-              <div className="flex items-center gap-2">
-                <div className="w-1 h-5 bg-gradient-to-b from-primary-500 to-primary-600 rounded-full" />
-                <h4 className="text-sm font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider">
-                  {section.heading}
-                </h4>
-              </div>
-              <ul className="space-y-2.5 pl-3">
-                {section.lines.map((line, lineIdx) => (
-                  <li key={`${section.heading}-${lineIdx}`} className="flex gap-3 items-start">
-                    <span className="w-5 h-5 rounded-full bg-gradient-to-br from-primary-100 to-primary-200 dark:from-primary-900 dark:to-primary-800 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <svg className="w-3 h-3 text-primary-600 dark:text-primary-400" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </span>
-                    <span className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{line}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-        
-        {/* Modal Footer */}
-        <div className="px-4 sm:px-6 py-4 border-t border-gray-200 dark:border-gray-700/80 flex justify-end bg-gradient-to-r from-transparent to-gray-50/50 dark:to-gray-800/50">
-          <button
-            onClick={handleCloseButtonClick}
-            className="px-5 sm:px-6 py-2.5 rounded-xl bg-gradient-to-r from-primary-600 to-primary-700 text-white font-semibold shadow-lg shadow-primary-500/30 hover:from-primary-700 hover:to-primary-800 hover:shadow-xl transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
-            type="button"
-          >
-            Got it!
-          </button>
+
+        {/* Modal Body - Scrollable */}
+        <div className="px-4 sm:px-6 py-4 sm:py-5 overflow-y-auto flex-1 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600 scrollbar-track-transparent">
+          {children}
         </div>
       </div>
     </div>

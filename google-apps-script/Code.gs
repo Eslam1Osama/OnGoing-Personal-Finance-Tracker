@@ -1,24 +1,28 @@
 /**
  * Personal Finance Tracker - Google Apps Script Backend
+ * ULTRA-OPTIMIZED VERSION v2 - Maximum performance
  * 
- * SETUP INSTRUCTIONS:
- * 1. Open your Google Sheet
- * 2. Go to Extensions > Apps Script
- * 3. Paste this code
- * 4. Update the SHEET_ID variable below with your Google Sheet ID
- * 5. Update the EMAIL variable with your email for notifications
- * 6. Deploy as Web App:
- *    - Click Deploy > New deployment
- *    - Choose type: Web app
- *    - Execute as: Me
- *    - Who has access: Only myself (or your choice)
- *    - Click Deploy
- *    - Copy the Web App URL
+ * OPTIMIZATION TECHNIQUES APPLIED:
+ * 1. CacheService caching for ALL read operations (60-second TTL)
+ * 2. Request-scoped spreadsheet/sheet caching
+ * 3. Batch read/write operations
+ * 4. getAllData endpoint for single-request data fetching
+ * 5. Removed synchronous reminder processing
+ * 6. Optimized data serialization
+ * 
+ * EXPECTED PERFORMANCE:
+ * - First request: 2-4 seconds (reads from sheet, caches)
+ * - Subsequent requests: 200-500ms (returns from cache)
+ * - Write operations: 2-3 seconds (invalidates cache)
  */
 
 // CONFIGURATION - UPDATE THESE VALUES
-const SHEET_ID = '1TwPJWU4Xn2sAmtMqrUBOFcy3JlaYbAe63-iamaniEjA'; // Get from your Google Sheet URL
-const EMAIL = 'eo54872@gmail.com'; // Your email for notifications
+const SHEET_ID = '1TwPJWU4Xn2sAmtMqrUBOFcy3JlaYbAe63-iamaniEjA';
+const EMAIL = 'eo54872@gmail.com';
+
+// Cache duration for read operations (in seconds)
+// Longer cache = faster reads, but data may be stale
+const CACHE_DURATION = 60; // 60 seconds cache
 
 // Sheet names
 const SHEETS = {
@@ -29,6 +33,117 @@ const SHEETS = {
   NOTES_PLANS: 'NotesPlans'
 };
 
+// Column counts for each sheet
+const COLUMN_COUNTS = {
+  BANKS: 3,
+  MONTHLY_BILLS: 11,
+  EXPENSES: 5,
+  CASH_BALANCE: 2,
+  NOTES_PLANS: 11
+};
+
+// Cache keys
+const CACHE_KEYS = {
+  BANKS: 'cache_banks_v2',
+  BILLS: 'cache_bills_v2',
+  EXPENSES: 'cache_expenses_v2',
+  CASH: 'cache_cash_v2',
+  NOTES: 'cache_notes_v2',
+  ALL_DATA: 'cache_all_data_v2'
+};
+
+// ========== REQUEST-SCOPED CACHING ==========
+let _spreadsheet = null;
+let _sheets = {};
+
+function getSpreadsheet() {
+  if (!_spreadsheet) {
+    _spreadsheet = SpreadsheetApp.openById(SHEET_ID);
+  }
+  return _spreadsheet;
+}
+
+function getSheet(sheetName) {
+  if (_sheets[sheetName]) {
+    return _sheets[sheetName];
+  }
+  
+  const ss = getSpreadsheet();
+  let sheet = ss.getSheetByName(sheetName);
+  
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    initializeSheetHeaders(sheet, sheetName);
+  }
+  
+  _sheets[sheetName] = sheet;
+  return sheet;
+}
+
+function initializeSheetHeaders(sheet, sheetName) {
+  const headers = {
+    [SHEETS.BANKS]: [['Bank Name', 'Balance', 'Currency']],
+    [SHEETS.MONTHLY_BILLS]: [['Bill Name', 'Amount', 'Due Date', 'Notes', 'Status', 'Last Paid Date', 'Is Recurring', 'Recurrence Type', 'Reminder Enabled', 'Reminder Count', 'Reminder Advance Days']],
+    [SHEETS.EXPENSES]: [['Expense Name', 'Category', 'Amount', 'Date', 'Notes']],
+    [SHEETS.CASH_BALANCE]: [['Date', 'Balance']],
+    [SHEETS.NOTES_PLANS]: [['Title', 'Description', 'Reminder Date', 'Reminder Time', 'Status', 'Created Date', 'Is Recurring', 'Recurrence Type', 'Reminder Enabled', 'Reminder Count', 'Reminder Advance Days']]
+  };
+  
+  if (headers[sheetName]) {
+    sheet.getRange(1, 1, 1, headers[sheetName][0].length).setValues(headers[sheetName]);
+  }
+}
+
+// ========== CACHE UTILITIES ==========
+
+/**
+ * Get cached data or fetch from sheet
+ */
+function getCachedData(cacheKey, fetchFunction) {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(cacheKey);
+  
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch (e) {
+      // Invalid cache, fetch fresh
+    }
+  }
+  
+  const data = fetchFunction();
+  
+  // Cache the result (max 100KB per key)
+  try {
+    const jsonData = JSON.stringify(data);
+    if (jsonData.length < 100000) {
+      cache.put(cacheKey, jsonData, CACHE_DURATION);
+    }
+  } catch (e) {
+    // Cache failed, continue without caching
+  }
+  
+  return data;
+}
+
+/**
+ * Invalidate specific cache keys
+ */
+function invalidateCache(...keys) {
+  const cache = CacheService.getScriptCache();
+  keys.forEach(key => cache.remove(key));
+  // Always invalidate ALL_DATA cache
+  cache.remove(CACHE_KEYS.ALL_DATA);
+}
+
+/**
+ * Invalidate all caches
+ */
+function invalidateAllCaches() {
+  const cache = CacheService.getScriptCache();
+  Object.values(CACHE_KEYS).forEach(key => cache.remove(key));
+}
+
 /**
  * Helper function to create CORS-enabled response
  */
@@ -37,9 +152,8 @@ function createCorsResponse(data) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-/**
- * Main doPost handler for all API requests
- */
+// ========== MAIN HANDLERS ==========
+
 function doPost(e) {
   try {
     const action = e.parameter.action;
@@ -49,9 +163,14 @@ function doPost(e) {
     let result;
     
     switch(action) {
+      // ===== NEW: Get all data in one request =====
+      case 'getAllData':
+        result = getAllData();
+        break;
+      
       // Banks
       case 'getBanks':
-        result = getBanks();
+        result = getBanksCached();
         break;
       case 'createBank':
         result = createBank(data);
@@ -65,7 +184,7 @@ function doPost(e) {
       
       // Bills
       case 'getBills':
-        result = getBills();
+        result = getBillsCached();
         break;
       case 'createBill':
         result = createBill(data);
@@ -82,7 +201,7 @@ function doPost(e) {
       
       // Expenses
       case 'getExpenses':
-        result = getExpenses(e.parameter);
+        result = getExpensesCached(e.parameter);
         break;
       case 'createExpense':
         result = createExpense(data);
@@ -96,7 +215,7 @@ function doPost(e) {
       
       // Cash Balance
       case 'getCashBalance':
-        result = getCashBalance();
+        result = getCashBalanceCached();
         break;
       case 'updateCashBalance':
         result = updateCashBalance(data.balance);
@@ -104,7 +223,7 @@ function doPost(e) {
       
       // Notes & Plans
       case 'getNotesPlans':
-        result = getNotesPlans();
+        result = getNotesPlansCached();
         break;
       case 'createNotePlan':
         result = createNotePlan(data);
@@ -119,9 +238,15 @@ function doPost(e) {
         result = markNotePlanCompleted(id);
         break;
       
-      // Dashboard
+      // Dashboard (uses cached data)
       case 'getDashboardSummary':
-        result = getDashboardSummary();
+        result = getDashboardSummaryCached();
+        break;
+      
+      // Cache management
+      case 'invalidateCache':
+        invalidateAllCaches();
+        result = { success: true, message: 'Cache invalidated' };
         break;
       
       default:
@@ -141,40 +266,39 @@ function doPost(e) {
   }
 }
 
-/**
- * GET handler - supports both GET and POST for compatibility
- */
 function doGet(e) {
   try {
     const action = e.parameter.action;
     
-    // Handle GET requests for read operations
     if (action) {
       let result;
       
       switch(action) {
+        case 'getAllData':
+          result = getAllData();
+          break;
         case 'getBanks':
-          result = getBanks();
+          result = getBanksCached();
           break;
         case 'getBills':
-          result = getBills();
+          result = getBillsCached();
           break;
         case 'getExpenses':
-          result = getExpenses(e.parameter);
+          result = getExpensesCached(e.parameter);
           break;
         case 'getCashBalance':
-          result = getCashBalance();
+          result = getCashBalanceCached();
           break;
         case 'getNotesPlans':
-          result = getNotesPlans();
+          result = getNotesPlansCached();
           break;
         case 'getDashboardSummary':
-          result = getDashboardSummary();
+          result = getDashboardSummaryCached();
           break;
         default:
           return createCorsResponse({
             success: true,
-            message: 'Personal Finance Tracker API is running',
+            message: 'Personal Finance Tracker API v2 (Ultra-Optimized)',
             timestamp: new Date().toISOString()
           });
       }
@@ -185,10 +309,9 @@ function doGet(e) {
       });
     }
     
-    // Default response for testing
     return createCorsResponse({
       success: true,
-      message: 'Personal Finance Tracker API is running',
+      message: 'Personal Finance Tracker API v2 (Ultra-Optimized)',
       timestamp: new Date().toISOString()
     });
     
@@ -200,62 +323,8 @@ function doGet(e) {
   }
 }
 
-/**
- * Get spreadsheet instance
- */
-function getSpreadsheet() {
-  return SpreadsheetApp.openById(SHEET_ID);
-}
+// ========== DATA READ FUNCTIONS (WITH CACHE) ==========
 
-/**
- * Get sheet by name
- */
-function getSheet(sheetName) {
-  const ss = getSpreadsheet();
-  let sheet = ss.getSheetByName(sheetName);
-  
-  if (!sheet) {
-    // Create sheet if it doesn't exist
-    sheet = ss.insertSheet(sheetName);
-    
-    // Set headers based on sheet type
-    switch(sheetName) {
-      case SHEETS.BANKS:
-        sheet.getRange(1, 1, 1, 3).setValues([['Bank Name', 'Balance', 'Currency']]);
-        break;
-      case SHEETS.MONTHLY_BILLS:
-        sheet.getRange(1, 1, 1, 11).setValues([['Bill Name', 'Amount', 'Due Date', 'Notes', 'Status', 'Last Paid Date', 'Is Recurring', 'Recurrence Type', 'Reminder Enabled', 'Reminder Count', 'Reminder Advance Days']]);
-        break;
-      case SHEETS.EXPENSES:
-        sheet.getRange(1, 1, 1, 5).setValues([['Expense Name', 'Category', 'Amount', 'Date', 'Notes']]);
-        break;
-      case SHEETS.CASH_BALANCE:
-        sheet.getRange(1, 1, 1, 2).setValues([['Date', 'Balance']]);
-        break;
-      case SHEETS.NOTES_PLANS:
-        sheet.getRange(1, 1, 1, 11).setValues([[
-          'Title',
-          'Description',
-          'Reminder Date',
-          'Reminder Time',
-          'Status',
-          'Created Date',
-          'Is Recurring',
-          'Recurrence Type',
-          'Reminder Enabled',
-          'Reminder Count',
-          'Reminder Advance Days'
-        ]]);
-        break;
-    }
-  }
-  
-  return sheet;
-}
-
-/**
- * Read data rows efficiently (excluding header).
- */
 function getDataRows(sheet, columnCount) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
@@ -263,74 +332,50 @@ function getDataRows(sheet, columnCount) {
 }
 
 /**
- * Reset headers for a specific sheet without changing data rows.
+ * Get ALL data in a single request - most efficient for initial load
  */
-function resetHeaders(sheetName) {
-  const sheet = getSheet(sheetName);
-  switch (sheetName) {
-    case SHEETS.BANKS:
-      sheet.getRange(1, 1, 1, 3).setValues([['Bank Name', 'Balance', 'Currency']]);
-      break;
-    case SHEETS.MONTHLY_BILLS:
-      sheet.getRange(1, 1, 1, 11).setValues([[
-        'Bill Name',
-        'Amount',
-        'Due Date',
-        'Notes',
-        'Status',
-        'Last Paid Date',
-        'Is Recurring',
-        'Recurrence Type',
-        'Reminder Enabled',
-        'Reminder Count',
-        'Reminder Advance Days'
-      ]]);
-      break;
-    case SHEETS.EXPENSES:
-      sheet.getRange(1, 1, 1, 5).setValues([['Expense Name', 'Category', 'Amount', 'Date', 'Notes']]);
-      break;
-    case SHEETS.CASH_BALANCE:
-      sheet.getRange(1, 1, 1, 2).setValues([['Date', 'Balance']]);
-      break;
-    case SHEETS.NOTES_PLANS:
-      sheet.getRange(1, 1, 1, 11).setValues([[
-        'Title',
-        'Description',
-        'Reminder Date',
-        'Reminder Time',
-        'Status',
-        'Created Date',
-        'Is Recurring',
-        'Recurrence Type',
-        'Reminder Enabled',
-        'Reminder Count',
-        'Reminder Advance Days'
-      ]]);
-      break;
-    default:
-      throw new Error('Unknown sheet name: ' + sheetName);
-  }
-  return { success: true };
+function getAllData() {
+  return getCachedData(CACHE_KEYS.ALL_DATA, () => {
+    // Pre-load spreadsheet
+    const ss = getSpreadsheet();
+    
+    // Get all sheets at once
+    const banksSheet = ss.getSheetByName(SHEETS.BANKS);
+    const billsSheet = ss.getSheetByName(SHEETS.MONTHLY_BILLS);
+    const expensesSheet = ss.getSheetByName(SHEETS.EXPENSES);
+    const cashSheet = ss.getSheetByName(SHEETS.CASH_BALANCE);
+    const notesSheet = ss.getSheetByName(SHEETS.NOTES_PLANS);
+    
+    return {
+      banks: banksSheet ? parseBanksData(getSheetData(banksSheet, COLUMN_COUNTS.BANKS)) : [],
+      bills: billsSheet ? parseBillsData(getSheetData(billsSheet, COLUMN_COUNTS.MONTHLY_BILLS)) : [],
+      expenses: expensesSheet ? parseExpensesData(getSheetData(expensesSheet, COLUMN_COUNTS.EXPENSES)) : [],
+      cashBalance: cashSheet ? parseCashData(cashSheet) : { balance: 0 },
+      notesPlans: notesSheet ? parseNotesData(getSheetData(notesSheet, COLUMN_COUNTS.NOTES_PLANS)) : [],
+      timestamp: new Date().toISOString()
+    };
+  });
 }
 
-/**
- * Reset headers for all sheets.
- */
-function resetAllHeaders() {
-  resetHeaders(SHEETS.BANKS);
-  resetHeaders(SHEETS.MONTHLY_BILLS);
-  resetHeaders(SHEETS.EXPENSES);
-  resetHeaders(SHEETS.CASH_BALANCE);
-  resetHeaders(SHEETS.NOTES_PLANS);
-  return { success: true };
+function getSheetData(sheet, columnCount) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  return sheet.getRange(2, 1, lastRow - 1, columnCount).getValues();
 }
 
 // ========== BANKS ==========
 
-function getBanks() {
+function getBanksCached() {
+  return getCachedData(CACHE_KEYS.BANKS, getBanksFromSheet);
+}
+
+function getBanksFromSheet() {
   const sheet = getSheet(SHEETS.BANKS);
-  const rows = getDataRows(sheet, 3);
-  
+  const rows = getDataRows(sheet, COLUMN_COUNTS.BANKS);
+  return parseBanksData(rows);
+}
+
+function parseBanksData(rows) {
   return rows.map((row, index) => ({
     id: `bank_${index + 1}`,
     bankName: row[0] || '',
@@ -342,23 +387,25 @@ function getBanks() {
 function createBank(data) {
   const sheet = getSheet(SHEETS.BANKS);
   sheet.appendRow([data.bankName, data.balance, data.currency || 'EGP']);
+  invalidateCache(CACHE_KEYS.BANKS);
   return { success: true };
 }
 
 function updateBank(id, data) {
   const sheet = getSheet(SHEETS.BANKS);
   const rowIndex = parseInt(id.split('_')[1]);
-  const row = rowIndex;
+  const row = rowIndex + 1;
   
-  if (data.bankName !== undefined) {
-    sheet.getRange(row + 1, 1).setValue(data.bankName);
-  }
-  if (data.balance !== undefined) {
-    sheet.getRange(row + 1, 2).setValue(data.balance);
-  }
-  if (data.currency !== undefined) {
-    sheet.getRange(row + 1, 3).setValue(data.currency);
-  }
+  const currentValues = sheet.getRange(row, 1, 1, COLUMN_COUNTS.BANKS).getValues()[0];
+  
+  const newValues = [
+    data.bankName !== undefined ? data.bankName : currentValues[0],
+    data.balance !== undefined ? data.balance : currentValues[1],
+    data.currency !== undefined ? data.currency : currentValues[2]
+  ];
+  
+  sheet.getRange(row, 1, 1, COLUMN_COUNTS.BANKS).setValues([newValues]);
+  invalidateCache(CACHE_KEYS.BANKS);
   
   return { success: true };
 }
@@ -367,20 +414,28 @@ function deleteBank(id) {
   const sheet = getSheet(SHEETS.BANKS);
   const rowIndex = parseInt(id.split('_')[1]);
   sheet.deleteRow(rowIndex + 1);
+  invalidateCache(CACHE_KEYS.BANKS);
   return { success: true };
 }
 
 // ========== BILLS ==========
 
-function getBills() {
+function getBillsCached() {
+  return getCachedData(CACHE_KEYS.BILLS, getBillsFromSheet);
+}
+
+function getBillsFromSheet() {
   const sheet = getSheet(SHEETS.MONTHLY_BILLS);
-  const rows = getDataRows(sheet, 11);
-  
+  const rows = getDataRows(sheet, COLUMN_COUNTS.MONTHLY_BILLS);
+  return parseBillsData(rows);
+}
+
+function parseBillsData(rows) {
   return rows.map((row, index) => ({
     id: `bill_${index + 1}`,
     billName: row[0] || '',
     amount: parseFloat(row[1]) || 0,
-    dueDate: row[2] ? new Date(row[2]).toISOString().split('T')[0] : '',
+    dueDate: row[2] ? formatDateToISO(row[2]) : '',
     notes: row[3] || '',
     status: row[4] || 'Unpaid',
     lastPaidDate: row[5] || '',
@@ -395,6 +450,7 @@ function getBills() {
 function createBill(data) {
   const sheet = getSheet(SHEETS.MONTHLY_BILLS);
   const dueDate = new Date(data.dueDate);
+  
   sheet.appendRow([
     data.billName,
     data.amount,
@@ -409,9 +465,7 @@ function createBill(data) {
     data.reminderAdvanceDays || 7
   ]);
   
-  // Schedule reminder check
-  checkBillReminders();
-  
+  invalidateCache(CACHE_KEYS.BILLS);
   return { success: true };
 }
 
@@ -420,16 +474,24 @@ function updateBill(id, data) {
   const rowIndex = parseInt(id.split('_')[1]);
   const row = rowIndex + 1;
   
-  if (data.billName !== undefined) sheet.getRange(row, 1).setValue(data.billName);
-  if (data.amount !== undefined) sheet.getRange(row, 2).setValue(data.amount);
-  if (data.dueDate !== undefined) sheet.getRange(row, 3).setValue(new Date(data.dueDate));
-  if (data.notes !== undefined) sheet.getRange(row, 4).setValue(data.notes);
-  if (data.status !== undefined) sheet.getRange(row, 5).setValue(data.status);
-  if (data.isRecurring !== undefined) sheet.getRange(row, 7).setValue(data.isRecurring);
-  if (data.recurrenceType !== undefined) sheet.getRange(row, 8).setValue(data.recurrenceType);
-  if (data.reminderEnabled !== undefined) sheet.getRange(row, 9).setValue(data.reminderEnabled);
-  if (data.reminderCount !== undefined) sheet.getRange(row, 10).setValue(data.reminderCount);
-  if (data.reminderAdvanceDays !== undefined) sheet.getRange(row, 11).setValue(data.reminderAdvanceDays);
+  const currentValues = sheet.getRange(row, 1, 1, COLUMN_COUNTS.MONTHLY_BILLS).getValues()[0];
+  
+  const newValues = [
+    data.billName !== undefined ? data.billName : currentValues[0],
+    data.amount !== undefined ? data.amount : currentValues[1],
+    data.dueDate !== undefined ? new Date(data.dueDate) : currentValues[2],
+    data.notes !== undefined ? data.notes : currentValues[3],
+    data.status !== undefined ? data.status : currentValues[4],
+    currentValues[5],
+    data.isRecurring !== undefined ? data.isRecurring : currentValues[6],
+    data.recurrenceType !== undefined ? data.recurrenceType : currentValues[7],
+    data.reminderEnabled !== undefined ? data.reminderEnabled : currentValues[8],
+    data.reminderCount !== undefined ? data.reminderCount : currentValues[9],
+    data.reminderAdvanceDays !== undefined ? data.reminderAdvanceDays : currentValues[10]
+  ];
+  
+  sheet.getRange(row, 1, 1, COLUMN_COUNTS.MONTHLY_BILLS).setValues([newValues]);
+  invalidateCache(CACHE_KEYS.BILLS);
   
   return { success: true };
 }
@@ -438,78 +500,69 @@ function deleteBill(id) {
   const sheet = getSheet(SHEETS.MONTHLY_BILLS);
   const rowIndex = parseInt(id.split('_')[1]);
   sheet.deleteRow(rowIndex + 1);
+  invalidateCache(CACHE_KEYS.BILLS);
   return { success: true };
 }
 
 function markBillPaid(id) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) {
+  if (!lock.tryLock(10000)) {
     return { success: false, error: 'System busy. Please try again.' };
   }
+  
   try {
     const sheet = getSheet(SHEETS.MONTHLY_BILLS);
     const rowIndex = parseInt(id.split('_')[1]);
     const row = rowIndex + 1;
     
-    // Get all bill data first
-    const billData = sheet.getRange(row, 1, 1, 11).getValues()[0];
+    const billData = sheet.getRange(row, 1, 1, COLUMN_COUNTS.MONTHLY_BILLS).getValues()[0];
     const currentStatus = billData[4] || 'Unpaid';
     
-    // If already paid, do not create another recurring entry
     if (currentStatus === 'Paid') {
       return { success: true, message: 'Bill already marked as paid' };
     }
     
-    sheet.getRange(row, 5).setValue('Paid');
-    sheet.getRange(row, 6).setValue(new Date());
+    const now = new Date();
+    billData[4] = 'Paid';
+    billData[5] = now;
+    sheet.getRange(row, 1, 1, COLUMN_COUNTS.MONTHLY_BILLS).setValues([billData]);
     
     const isRecurring = billData[6] === true || billData[6] === 'TRUE';
     
-    // Create next bill if recurring
     if (isRecurring) {
       const recurrenceType = billData[7] || 'monthly';
       const nextDueDate = addRecurringDate(billData[2], recurrenceType);
       
-      // Prevent duplicate recurring entries for the same next due date
-      const lastRow = sheet.getLastRow();
-      const nextDueDateKey = Utilities.formatDate(nextDueDate, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-      const billName = billData[0] || '';
-      let duplicateExists = false;
-      if (lastRow >= 2) {
-        const rows = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
-        duplicateExists = rows.some(r => {
-          const rowBillName = r[0] || '';
-          const rowDueDate = r[2] ? Utilities.formatDate(new Date(r[2]), Session.getScriptTimeZone(), 'yyyy-MM-dd') : '';
-          return rowBillName === billName && rowDueDate === nextDueDateKey;
-        });
-      }
-      
-      if (!duplicateExists) {
+      if (!checkDuplicateBill(sheet, billData[0], nextDueDate)) {
         sheet.appendRow([
-          billData[0], // Bill Name
-          billData[1], // Amount
-          nextDueDate, // Due Date
-          billData[3] || '', // Notes
-          'Unpaid', // Status
-          '', // Last Paid Date
-          billData[6] || false, // Is Recurring
-          billData[7] || '', // Recurrence Type
-          billData[8] || false, // Reminder Enabled
-          billData[9] || 1, // Reminder Count
-          billData[10] || 7 // Reminder Advance Days
+          billData[0], billData[1], nextDueDate, billData[3] || '', 'Unpaid', '',
+          billData[6] || false, billData[7] || '', billData[8] || false,
+          billData[9] || 1, billData[10] || 7
         ]);
       }
     }
     
+    invalidateCache(CACHE_KEYS.BILLS);
     return { success: true };
   } finally {
     lock.releaseLock();
   }
 }
 
-/**
- * Calculate next due date for recurring bills while preserving day-of-month.
- */
+function checkDuplicateBill(sheet, billName, dueDate) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+  
+  const dueDateKey = Utilities.formatDate(dueDate, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const rows = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  
+  return rows.some(r => {
+    const rowBillName = r[0] || '';
+    const rowDueDate = r[2] ? Utilities.formatDate(new Date(r[2]), Session.getScriptTimeZone(), 'yyyy-MM-dd') : '';
+    return rowBillName === billName && rowDueDate === dueDateKey;
+  });
+}
+
 function addRecurringDate(baseDateValue, recurrenceType) {
   const baseDate = new Date(baseDateValue);
   baseDate.setHours(0, 0, 0, 0);
@@ -543,20 +596,34 @@ function addRecurringDate(baseDateValue, recurrenceType) {
 
 // ========== EXPENSES ==========
 
-function getExpenses(params) {
+function getExpensesCached(params) {
+  // For filtered requests, don't cache (filters may vary)
+  if (params && (params.startDate || params.endDate || params.category)) {
+    return getExpensesFiltered(params);
+  }
+  return getCachedData(CACHE_KEYS.EXPENSES, getExpensesFromSheet);
+}
+
+function getExpensesFromSheet() {
   const sheet = getSheet(SHEETS.EXPENSES);
-  const rows = getDataRows(sheet, 5);
-  
-  let expenses = rows.map((row, index) => ({
+  const rows = getDataRows(sheet, COLUMN_COUNTS.EXPENSES);
+  return parseExpensesData(rows);
+}
+
+function parseExpensesData(rows) {
+  return rows.map((row, index) => ({
     id: `expense_${index + 1}`,
     expenseName: row[0] || '',
     category: row[1] || '',
     amount: parseFloat(row[2]) || 0,
-    date: row[3] ? new Date(row[3]).toISOString().split('T')[0] : '',
+    date: row[3] ? formatDateToISO(row[3]) : '',
     notes: row[4] || ''
   }));
+}
+
+function getExpensesFiltered(params) {
+  let expenses = getExpensesFromSheet();
   
-  // Apply filters
   if (params.startDate) {
     const startDate = new Date(params.startDate);
     expenses = expenses.filter(e => new Date(e.date) >= startDate);
@@ -575,6 +642,7 @@ function getExpenses(params) {
 function createExpense(data) {
   const sheet = getSheet(SHEETS.EXPENSES);
   const expenseDate = new Date(data.date);
+  
   sheet.appendRow([
     data.expenseName,
     data.category,
@@ -583,8 +651,8 @@ function createExpense(data) {
     data.notes || ''
   ]);
   
-  // Update cash balance (deduct expense)
   updateCashBalanceFromExpense(data.amount);
+  invalidateCache(CACHE_KEYS.EXPENSES);
   
   return { success: true };
 }
@@ -594,21 +662,26 @@ function updateExpense(id, data) {
   const rowIndex = parseInt(id.split('_')[1]);
   const row = rowIndex + 1;
   
-  // Get old amount for cash balance adjustment
-  const oldAmount = parseFloat(sheet.getRange(row, 3).getValue());
+  const currentValues = sheet.getRange(row, 1, 1, COLUMN_COUNTS.EXPENSES).getValues()[0];
+  const oldAmount = parseFloat(currentValues[2]) || 0;
   
-  if (data.expenseName !== undefined) sheet.getRange(row, 1).setValue(data.expenseName);
-  if (data.category !== undefined) sheet.getRange(row, 2).setValue(data.category);
+  const newValues = [
+    data.expenseName !== undefined ? data.expenseName : currentValues[0],
+    data.category !== undefined ? data.category : currentValues[1],
+    data.amount !== undefined ? data.amount : currentValues[2],
+    data.date !== undefined ? new Date(data.date) : currentValues[3],
+    data.notes !== undefined ? data.notes : currentValues[4]
+  ];
+  
+  sheet.getRange(row, 1, 1, COLUMN_COUNTS.EXPENSES).setValues([newValues]);
+  
   if (data.amount !== undefined) {
-    sheet.getRange(row, 3).setValue(data.amount);
-    // Adjust cash balance
     const newAmount = parseFloat(data.amount);
     const difference = oldAmount - newAmount;
-    updateCashBalanceFromExpense(-difference); // Add back the difference
+    updateCashBalanceFromExpense(-difference);
   }
-  if (data.date !== undefined) sheet.getRange(row, 4).setValue(new Date(data.date));
-  if (data.notes !== undefined) sheet.getRange(row, 5).setValue(data.notes);
   
+  invalidateCache(CACHE_KEYS.EXPENSES);
   return { success: true };
 }
 
@@ -617,24 +690,30 @@ function deleteExpense(id) {
   const rowIndex = parseInt(id.split('_')[1]);
   const row = rowIndex + 1;
   
-  // Get amount to add back to cash
-  const amount = parseFloat(sheet.getRange(row, 3).getValue());
+  const amount = parseFloat(sheet.getRange(row, 3).getValue()) || 0;
   updateCashBalanceFromExpense(-amount);
   
   sheet.deleteRow(row);
+  invalidateCache(CACHE_KEYS.EXPENSES);
   return { success: true };
 }
 
 // ========== CASH BALANCE ==========
 
-function getCashBalance() {
+function getCashBalanceCached() {
+  return getCachedData(CACHE_KEYS.CASH, getCashBalanceFromSheet);
+}
+
+function getCashBalanceFromSheet() {
   const sheet = getSheet(SHEETS.CASH_BALANCE);
+  return parseCashData(sheet);
+}
+
+function parseCashData(sheet) {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) {
     return { balance: 0 };
   }
-  
-  // Get the most recent balance
   const balance = sheet.getRange(lastRow, 2).getValue();
   return { balance: parseFloat(balance) || 0 };
 }
@@ -643,26 +722,34 @@ function updateCashBalance(balance) {
   const sheet = getSheet(SHEETS.CASH_BALANCE);
   const today = new Date();
   sheet.appendRow([today, balance]);
+  invalidateCache(CACHE_KEYS.CASH);
   return { success: true };
 }
 
 function updateCashBalanceFromExpense(amount) {
-  const current = getCashBalance();
+  const current = getCashBalanceFromSheet(); // Use fresh data, not cached
   const newBalance = current.balance - amount;
   updateCashBalance(newBalance);
 }
 
 // ========== NOTES & PLANS ==========
 
-function getNotesPlans() {
+function getNotesPlansCached() {
+  return getCachedData(CACHE_KEYS.NOTES, getNotesPlansFromSheet);
+}
+
+function getNotesPlansFromSheet() {
   const sheet = getSheet(SHEETS.NOTES_PLANS);
-  const rows = getDataRows(sheet, 11);
-  
+  const rows = getDataRows(sheet, COLUMN_COUNTS.NOTES_PLANS);
+  return parseNotesData(rows);
+}
+
+function parseNotesData(rows) {
   return rows.map((row, index) => ({
     id: `note_${index + 1}`,
     title: row[0] || '',
     description: row[1] || '',
-    reminderDate: row[2] ? new Date(row[2]).toISOString().split('T')[0] : '',
+    reminderDate: row[2] ? formatDateToISO(row[2]) : '',
     reminderTime: row[3] || '',
     status: row[4] || 'Pending',
     createdDate: row[5] ? new Date(row[5]).toISOString() : new Date().toISOString(),
@@ -677,23 +764,15 @@ function getNotesPlans() {
 function createNotePlan(data) {
   const sheet = getSheet(SHEETS.NOTES_PLANS);
   const reminderDate = new Date(data.reminderDate);
+  
   sheet.appendRow([
-    data.title,
-    data.description,
-    reminderDate,
-    data.reminderTime || '',
-    data.status || 'Pending',
-    new Date(),
-    data.isRecurring || false,
-    data.recurrenceType || '',
-    data.reminderEnabled || false,
-    data.reminderCount || 1,
-    data.reminderAdvanceDays || 0
+    data.title, data.description, reminderDate, data.reminderTime || '',
+    data.status || 'Pending', new Date(), data.isRecurring || false,
+    data.recurrenceType || '', data.reminderEnabled || false,
+    data.reminderCount || 1, data.reminderAdvanceDays || 0
   ]);
   
-  // Check reminders
-  checkNoteReminders();
-  
+  invalidateCache(CACHE_KEYS.NOTES);
   return { success: true };
 }
 
@@ -702,16 +781,24 @@ function updateNotePlan(id, data) {
   const rowIndex = parseInt(id.split('_')[1]);
   const row = rowIndex + 1;
   
-  if (data.title !== undefined) sheet.getRange(row, 1).setValue(data.title);
-  if (data.description !== undefined) sheet.getRange(row, 2).setValue(data.description);
-  if (data.reminderDate !== undefined) sheet.getRange(row, 3).setValue(new Date(data.reminderDate));
-  if (data.reminderTime !== undefined) sheet.getRange(row, 4).setValue(data.reminderTime);
-  if (data.status !== undefined) sheet.getRange(row, 5).setValue(data.status);
-  if (data.isRecurring !== undefined) sheet.getRange(row, 7).setValue(data.isRecurring);
-  if (data.recurrenceType !== undefined) sheet.getRange(row, 8).setValue(data.recurrenceType);
-  if (data.reminderEnabled !== undefined) sheet.getRange(row, 9).setValue(data.reminderEnabled);
-  if (data.reminderCount !== undefined) sheet.getRange(row, 10).setValue(data.reminderCount);
-  if (data.reminderAdvanceDays !== undefined) sheet.getRange(row, 11).setValue(data.reminderAdvanceDays);
+  const currentValues = sheet.getRange(row, 1, 1, COLUMN_COUNTS.NOTES_PLANS).getValues()[0];
+  
+  const newValues = [
+    data.title !== undefined ? data.title : currentValues[0],
+    data.description !== undefined ? data.description : currentValues[1],
+    data.reminderDate !== undefined ? new Date(data.reminderDate) : currentValues[2],
+    data.reminderTime !== undefined ? data.reminderTime : currentValues[3],
+    data.status !== undefined ? data.status : currentValues[4],
+    currentValues[5],
+    data.isRecurring !== undefined ? data.isRecurring : currentValues[6],
+    data.recurrenceType !== undefined ? data.recurrenceType : currentValues[7],
+    data.reminderEnabled !== undefined ? data.reminderEnabled : currentValues[8],
+    data.reminderCount !== undefined ? data.reminderCount : currentValues[9],
+    data.reminderAdvanceDays !== undefined ? data.reminderAdvanceDays : currentValues[10]
+  ];
+  
+  sheet.getRange(row, 1, 1, COLUMN_COUNTS.NOTES_PLANS).setValues([newValues]);
+  invalidateCache(CACHE_KEYS.NOTES);
   
   return { success: true };
 }
@@ -720,86 +807,104 @@ function deleteNotePlan(id) {
   const sheet = getSheet(SHEETS.NOTES_PLANS);
   const rowIndex = parseInt(id.split('_')[1]);
   sheet.deleteRow(rowIndex + 1);
+  invalidateCache(CACHE_KEYS.NOTES);
   return { success: true };
 }
 
 function markNotePlanCompleted(id) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) {
+  if (!lock.tryLock(10000)) {
     return { success: false, error: 'System busy. Please try again.' };
   }
+  
   try {
     const sheet = getSheet(SHEETS.NOTES_PLANS);
     const rowIndex = parseInt(id.split('_')[1]);
     const row = rowIndex + 1;
-    const noteData = sheet.getRange(row, 1, 1, 11).getValues()[0];
+    
+    const noteData = sheet.getRange(row, 1, 1, COLUMN_COUNTS.NOTES_PLANS).getValues()[0];
     const currentStatus = noteData[4] || 'Pending';
+    
     if (currentStatus === 'Completed') {
       return { success: true, message: 'Already completed' };
     }
 
-    sheet.getRange(row, 5).setValue('Completed');
+    noteData[4] = 'Completed';
+    sheet.getRange(row, 1, 1, COLUMN_COUNTS.NOTES_PLANS).setValues([noteData]);
 
     const isRecurring = noteData[6] === true || noteData[6] === 'TRUE';
+    
     if (isRecurring) {
       const recurrenceType = noteData[7] || 'monthly';
       const nextReminderDate = addRecurringDate(noteData[2], recurrenceType);
-      const nextDateKey = Utilities.formatDate(nextReminderDate, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-      const title = noteData[0] || '';
-
-      const lastRow = sheet.getLastRow();
-      let duplicateExists = false;
-      if (lastRow >= 2) {
-        const rows = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
-        duplicateExists = rows.some(r => {
-          const rowTitle = r[0] || '';
-          const rowDate = r[2] ? Utilities.formatDate(new Date(r[2]), Session.getScriptTimeZone(), 'yyyy-MM-dd') : '';
-          return rowTitle === title && rowDate === nextDateKey;
-        });
-      }
-
-      if (!duplicateExists) {
+      
+      if (!checkDuplicateNote(sheet, noteData[0], nextReminderDate)) {
         sheet.appendRow([
-          noteData[0], // Title
-          noteData[1], // Description
-          nextReminderDate, // Reminder Date
-          noteData[3] || '', // Reminder Time
-          'Pending', // Status
-          new Date(), // Created Date
-          noteData[6] || false, // Is Recurring
-          noteData[7] || '', // Recurrence Type
-          noteData[8] || false, // Reminder Enabled
-          noteData[9] || 1, // Reminder Count
-          noteData[10] || 0 // Reminder Advance Days
+          noteData[0], noteData[1], nextReminderDate, noteData[3] || '',
+          'Pending', new Date(), noteData[6] || false, noteData[7] || '',
+          noteData[8] || false, noteData[9] || 1, noteData[10] || 0
         ]);
       }
     }
 
+    invalidateCache(CACHE_KEYS.NOTES);
     return { success: true };
   } finally {
     lock.releaseLock();
   }
 }
 
-// ========== DASHBOARD ==========
-
-function getDashboardSummary() {
-  return {
-    banks: getBanks(),
-    cashBalance: getCashBalance(),
-    bills: getBills(),
-    expenses: getExpenses({})
-  };
+function checkDuplicateNote(sheet, title, reminderDate) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return false;
+  
+  const dateKey = Utilities.formatDate(reminderDate, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  const rows = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+  
+  return rows.some(r => {
+    const rowTitle = r[0] || '';
+    const rowDate = r[2] ? Utilities.formatDate(new Date(r[2]), Session.getScriptTimeZone(), 'yyyy-MM-dd') : '';
+    return rowTitle === title && rowDate === dateKey;
+  });
 }
 
-// ========== REMINDERS & NOTIFICATIONS ==========
+// ========== DASHBOARD ==========
 
-/**
- * Check bill reminders and send emails
- * This should be triggered daily via a time-driven trigger
- */
+function getDashboardSummaryCached() {
+  return getCachedData(CACHE_KEYS.ALL_DATA, () => ({
+    banks: getBanksFromSheet(),
+    cashBalance: getCashBalanceFromSheet(),
+    bills: getBillsFromSheet(),
+    expenses: getExpensesFromSheet()
+  }));
+}
+
+// ========== UTILITIES ==========
+
+function formatDateToISO(dateValue) {
+  try {
+    const date = new Date(dateValue);
+    return date.toISOString().split('T')[0];
+  } catch (e) {
+    return '';
+  }
+}
+
+function resetHeaders(sheetName) {
+  const sheet = getSheet(sheetName);
+  initializeSheetHeaders(sheet, sheetName);
+  return { success: true };
+}
+
+function resetAllHeaders() {
+  Object.values(SHEETS).forEach(sheetName => resetHeaders(sheetName));
+  return { success: true };
+}
+
+// ========== REMINDERS (TRIGGER-BASED ONLY) ==========
+
 function checkBillReminders() {
-  const bills = getBills();
+  const bills = getBillsFromSheet();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
@@ -810,91 +915,62 @@ function checkBillReminders() {
     dueDate.setHours(0, 0, 0, 0);
     const daysUntilDue = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
     
-    // Send reminder 7 days before and 2 days before
     if (daysUntilDue === 7 || daysUntilDue === 2) {
       sendBillReminderEmail(bill, daysUntilDue);
     }
   });
 }
 
-/**
- * Check note/plan reminders and send emails
- */
 function checkNoteReminders() {
-  const notes = getNotesPlans();
+  const notes = getNotesPlansFromSheet();
   const now = new Date();
   
   notes.forEach(note => {
-    if (note.status === 'Completed') return;
+    if (note.status === 'Completed' || !note.reminderEnabled) return;
     
     const reminderDateTime = new Date(`${note.reminderDate}T${note.reminderTime || '00:00'}`);
     const daysUntilReminder = Math.ceil((reminderDateTime.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    const reminderEnabled = note.reminderEnabled === true;
     const reminderCount = note.reminderCount || 1;
     const reminderAdvanceDays = note.reminderAdvanceDays || 0;
 
-    if (!reminderEnabled) return;
-
-    // Send reminders in advance days window (once per day)
     if (daysUntilReminder >= 0 && daysUntilReminder <= reminderAdvanceDays) {
-      const index = reminderAdvanceDays - daysUntilReminder; // 0..advanceDays
+      const index = reminderAdvanceDays - daysUntilReminder;
       if (index < reminderCount) {
         const cache = CacheService.getScriptCache();
         const cacheKey = `note_reminder_${note.title}_${note.reminderDate}_${index}`;
         if (!cache.get(cacheKey)) {
           sendNoteReminderEmail(note);
-          cache.put(cacheKey, '1', 60 * 60 * 12); // 12 hours
+          cache.put(cacheKey, '1', 60 * 60 * 12);
         }
       }
     }
   });
 }
 
-/**
- * Send bill reminder email
- */
 function sendBillReminderEmail(bill, daysUntilDue) {
-  const subject = `Bill Reminder: ${bill.billName} due in ${daysUntilDue} days`;
-  const body = `
-    <h2>Bill Reminder</h2>
-    <p><strong>Bill Name:</strong> ${bill.billName}</p>
-    <p><strong>Amount:</strong> $${bill.amount.toFixed(2)}</p>
-    <p><strong>Due Date:</strong> ${new Date(bill.dueDate).toLocaleDateString()}</p>
-    <p><strong>Days Until Due:</strong> ${daysUntilDue}</p>
-    ${bill.notes ? `<p><strong>Notes:</strong> ${bill.notes}</p>` : ''}
-  `;
-  
   MailApp.sendEmail({
     to: EMAIL,
-    subject: subject,
-    htmlBody: body
+    subject: `Bill Reminder: ${bill.billName} due in ${daysUntilDue} days`,
+    htmlBody: `<h2>Bill Reminder</h2>
+      <p><strong>Bill Name:</strong> ${bill.billName}</p>
+      <p><strong>Amount:</strong> $${bill.amount.toFixed(2)}</p>
+      <p><strong>Due Date:</strong> ${new Date(bill.dueDate).toLocaleDateString()}</p>
+      <p><strong>Days Until Due:</strong> ${daysUntilDue}</p>
+      ${bill.notes ? `<p><strong>Notes:</strong> ${bill.notes}</p>` : ''}`
   });
 }
 
-/**
- * Send note/plan reminder email
- */
 function sendNoteReminderEmail(note) {
-  const subject = `Reminder: ${note.title}`;
-  const body = `
-    <h2>${note.title}</h2>
-    <p>${note.description}</p>
-    <p><strong>Reminder Time:</strong> ${new Date(`${note.reminderDate}T${note.reminderTime || '00:00'}`).toLocaleString()}</p>
-  `;
-  
   MailApp.sendEmail({
     to: EMAIL,
-    subject: subject,
-    htmlBody: body
+    subject: `Reminder: ${note.title}`,
+    htmlBody: `<h2>${note.title}</h2>
+      <p>${note.description}</p>
+      <p><strong>Reminder Time:</strong> ${new Date(`${note.reminderDate}T${note.reminderTime || '00:00'}`).toLocaleString()}</p>`
   });
 }
 
-/**
- * Set up time-driven triggers for daily reminder checks
- * Run this function once manually to set up the triggers
- */
 function setupTriggers() {
-  // Delete existing triggers
   const triggers = ScriptApp.getProjectTriggers();
   triggers.forEach(trigger => {
     if (trigger.getHandlerFunction() === 'checkBillReminders' || 
@@ -903,14 +979,12 @@ function setupTriggers() {
     }
   });
   
-  // Create daily trigger for bill reminders (runs at 9 AM)
   ScriptApp.newTrigger('checkBillReminders')
     .timeBased()
     .everyDays(1)
     .atHour(9)
     .create();
   
-  // Create hourly trigger for note reminders
   ScriptApp.newTrigger('checkNoteReminders')
     .timeBased()
     .everyHours(1)

@@ -36,10 +36,28 @@ body {
     scroll-behavior: smooth;
   }
   
-  /* Better focus styles for accessibility */
+  /* Better focus styles for accessibility - only show on keyboard navigation */
   *:focus-visible {
     outline: 2px solid #0284c7;
     outline-offset: 2px;
+  }
+  
+  /* 
+   * Hide focus ring for programmatic focus (e.g., when returning from modal)
+   * Only show focus styles when using keyboard (focus-visible)
+   */
+  button:focus:not(:focus-visible),
+  a:focus:not(:focus-visible),
+  [role="button"]:focus:not(:focus-visible) {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+  
+  /* Remove any lingering focus effects on buttons after modal close */
+  button:not(:focus):not(:hover):not(:active),
+  a:not(:focus):not(:hover):not(:active),
+  [role="button"]:not(:focus):not(:hover):not(:active) {
+    outline: none;
   }
   
   /* Custom scrollbar */
@@ -71,5 +89,122 @@ body {
   
   .dark ::-webkit-scrollbar-thumb:hover {
     background: #64748b;
+  }
+}
+
+/* ========================================
+   TOUCH DEVICE HOVER FIX
+   ========================================
+   Prevents "sticky" hover states on touch devices.
+   Hover effects will only apply on devices with mouse/trackpad.
+   This targets screens < 1024px OR touch-only devices.
+   ======================================== */
+
+@layer base {
+  /* 
+   * Reset hover effects on touch devices (devices that don't support hover)
+   * This prevents the "stuck" highlighted state after tapping buttons
+   */
+  @media (hover: none), (pointer: coarse) {
+    /* Reset button hover states on touch devices */
+    button:hover,
+    a:hover,
+    [role="button"]:hover {
+      /* Inherit default styles - no hover effects */
+      filter: none !important;
+      transform: none !important;
+    }
+    
+    /* Reset gradient button hover states */
+    .hover\:from-primary-700:hover {
+      --tw-gradient-from: #0284c7 !important;
+    }
+    
+    .hover\:to-primary-800:hover {
+      --tw-gradient-to: #0369a1 !important;
+    }
+    
+    .hover\:from-green-700:hover {
+      --tw-gradient-from: #15803d !important;
+    }
+    
+    .hover\:to-green-800:hover {
+      --tw-gradient-to: #166534 !important;
+    }
+    
+    .hover\:from-red-700:hover {
+      --tw-gradient-from: #b91c1c !important;
+    }
+    
+    .hover\:to-red-800:hover {
+      --tw-gradient-to: #991b1b !important;
+    }
+    
+    /* Reset shadow hover states */
+    .hover\:shadow-xl:hover {
+      --tw-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1) !important;
+      box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow) !important;
+    }
+    
+    /* Reset scale transforms on hover */
+    .hover\:scale-105:hover,
+    .hover\:scale-110:hover {
+      --tw-scale-x: 1 !important;
+      --tw-scale-y: 1 !important;
+      transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y)) !important;
+    }
+    
+    /* Reset background color hover states */
+    .hover\:bg-gray-100:hover {
+      background-color: transparent !important;
+    }
+    
+    .hover\:bg-gray-200:hover {
+      background-color: rgb(229 231 235) !important;
+    }
+    
+    .hover\:bg-gray-300:hover {
+      background-color: rgb(229 231 235) !important;
+    }
+    
+    .dark .hover\:bg-gray-600:hover {
+      background-color: rgb(75 85 99) !important;
+    }
+    
+    .dark .hover\:bg-gray-700:hover {
+      background-color: rgb(55 65 81) !important;
+    }
+    
+    .dark .hover\:bg-gray-800:hover {
+      background-color: rgb(31 41 55) !important;
+    }
+  }
+  
+  /* 
+   * Alternative approach: Only enable hover effects on devices that support hover
+   * AND have a fine pointer (mouse/trackpad, not touch)
+   */
+  @media (hover: hover) and (pointer: fine) {
+    /* Hover effects are naturally supported - no changes needed */
+    /* This media query confirms device has true hover capability */
+  }
+}
+
+/* ========================================
+   ACTIVE STATE ENHANCEMENT
+   ========================================
+   Add subtle active state for better touch feedback
+   ======================================== */
+
+@layer utilities {
+  /* Enhanced active states for touch devices */
+  @media (hover: none), (pointer: coarse) {
+    button:active:not(:disabled),
+    a:active,
+    [role="button"]:active {
+      transform: scale(0.98) !important;
+      opacity: 0.9;
+      transition: transform 0.1s ease, opacity 0.1s ease;
+    }
   }
 }

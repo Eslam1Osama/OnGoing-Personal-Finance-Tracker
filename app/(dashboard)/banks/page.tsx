@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react';
 import { banksAPI, Bank } from '@/lib/api';
 import InfoModal from '@/components/InfoModal';
-import { getExchangeRates, convertCurrency, formatCurrency, ExchangeRates } from '@/lib/currency';
+import FormModal from '@/components/FormModal';
+import { getExchangeRatesWithMeta, convertCurrency, formatCurrency, ExchangeRates, getTimeSinceUpdate, clearExchangeRateCache } from '@/lib/currency';
+import { validateBankForm, sanitizeInput } from '@/lib/validation';
 
 export default function BanksPage() {
   const [banks, setBanks] = useState<Bank[]>([]);
@@ -16,6 +18,9 @@ export default function BanksPage() {
   const [showInfo, setShowInfo] = useState(false);
   const [selectedCurrency, setSelectedCurrency] = useState<string>('EGP');
   const [exchangeRates, setExchangeRates] = useState<ExchangeRates | null>(null);
+  const [ratesLastUpdated, setRatesLastUpdated] = useState<string>('');
+  const [isRatesLive, setIsRatesLive] = useState<boolean>(true);
+  const [isRefreshingRates, setIsRefreshingRates] = useState<boolean>(false);
   const [formData, setFormData] = useState({ bankName: '', balance: '', currency: 'EGP' });
 
   useEffect(() => {
@@ -23,12 +28,20 @@ export default function BanksPage() {
     loadExchangeRates();
   }, []);
 
-  const loadExchangeRates = async () => {
+  const loadExchangeRates = async (forceRefresh = false) => {
     try {
-      const rates = await getExchangeRates();
+      if (forceRefresh) {
+        setIsRefreshingRates(true);
+        clearExchangeRateCache();
+      }
+      const { rates, lastUpdated, isLive } = await getExchangeRatesWithMeta(forceRefresh);
       setExchangeRates(rates);
+      setRatesLastUpdated(lastUpdated);
+      setIsRatesLive(isLive);
     } catch (err) {
       console.error('Failed to load exchange rates:', err);
+    } finally {
+      setIsRefreshingRates(false);
     }
   };
 
@@ -47,19 +60,36 @@ export default function BanksPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
+    
+    // Sanitize inputs
+    const sanitizedData = {
+      bankName: sanitizeInput(formData.bankName),
+      balance: formData.balance.trim(),
+      currency: formData.currency,
+    };
+    
+    // Validate form
+    const validation = validateBankForm(sanitizedData);
+    if (!validation.isValid) {
+      setError(validation.error || 'Please check your input');
+      return;
+    }
+    
     try {
       setIsSubmitting(true);
+      setError('');
+      
       if (editingBank?.id) {
         await banksAPI.update(editingBank.id, {
-          bankName: formData.bankName,
-          balance: parseFloat(formData.balance),
-          currency: formData.currency,
+          bankName: sanitizedData.bankName,
+          balance: parseFloat(sanitizedData.balance),
+          currency: sanitizedData.currency,
         });
       } else {
         await banksAPI.create({
-          bankName: formData.bankName,
-          balance: parseFloat(formData.balance),
-          currency: formData.currency,
+          bankName: sanitizedData.bankName,
+          balance: parseFloat(sanitizedData.balance),
+          currency: sanitizedData.currency,
         });
       }
       setShowForm(false);
@@ -215,12 +245,27 @@ export default function BanksPage() {
               <option value="GBP">🇬🇧 British Pound (GBP)</option>
             </select>
             {exchangeRates && (
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 flex items-center gap-1">
-                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-                </svg>
-                Rates updated {new Date().toLocaleTimeString()}
-              </p>
+              <div className="flex items-center gap-3 mt-2">
+                <p className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+                  {isRatesLive ? (
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                  ) : (
+                    <span className="w-2 h-2 bg-yellow-500 rounded-full"></span>
+                  )}
+                  {isRatesLive ? 'Live rates' : 'Cached rates'} • Updated {getTimeSinceUpdate(ratesLastUpdated)}
+                </p>
+                <button
+                  onClick={() => loadExchangeRates(true)}
+                  disabled={isRefreshingRates}
+                  className="text-xs text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 flex items-center gap-1 disabled:opacity-50"
+                  type="button"
+                >
+                  <svg className={`w-3 h-3 ${isRefreshingRates ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Refresh
+                </button>
+              </div>
             )}
           </div>
           <div className="text-right sm:text-left sm:min-w-[200px]">
@@ -245,86 +290,100 @@ export default function BanksPage() {
         </div>
       </div>
 
-      {/* Add/Edit Form */}
-      {showForm && (
-        <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-xl p-4 sm:p-6 mb-6 border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white mb-5 sm:mb-6 flex items-center gap-2">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center shadow-md">
-              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-              </svg>
-            </div>
-            {editingBank ? 'Edit Bank Account' : 'Add New Bank Account'}
-          </h2>
-          <form onSubmit={handleSubmit} className="space-y-5">
+      {/* Add/Edit Form Modal */}
+      <FormModal
+        isOpen={showForm}
+        onClose={() => {
+          setShowForm(false);
+          setEditingBank(null);
+          setFormData({ bankName: '', balance: '', currency: 'EGP' });
+        }}
+        title={editingBank ? 'Edit Bank Account' : 'Add New Bank Account'}
+        icon={
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+          </svg>
+        }
+        maxWidth="lg"
+      >
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Bank Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+              placeholder="e.g., National Bank of Egypt"
+              value={formData.bankName}
+              onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Bank Name <span className="text-red-500">*</span>
+                Balance <span className="text-red-500">*</span>
               </label>
               <input
-                type="text"
+                type="number"
+                step="0.01"
                 required
                 className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
-                placeholder="e.g., National Bank of Egypt"
-                value={formData.bankName}
-                onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
+                placeholder="0.00"
+                value={formData.balance}
+                onChange={(e) => setFormData({ ...formData, balance: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Balance <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
-                  placeholder="0.00"
-                  value={formData.balance}
-                  onChange={(e) => setFormData({ ...formData, balance: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Currency <span className="text-red-500">*</span>
-                </label>
-                <select
-                  value={formData.currency}
-                  onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
-                  className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
-                >
-                  <option value="EGP">Egyptian Pound (EGP)</option>
-                  <option value="USD">US Dollar (USD)</option>
-                  <option value="EUR">Euro (EUR)</option>
-                  <option value="JPY">Japanese Yen (JPY)</option>
-                  <option value="GBP">British Pound (GBP)</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-3 pt-4">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="flex-1 px-6 py-2.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg shadow-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed hover:from-primary-700 hover:to-primary-800 hover:shadow-xl"
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Currency <span className="text-red-500">*</span>
+              </label>
+              <select
+                value={formData.currency}
+                onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
               >
-                {editingBank ? 'Update Account' : 'Add Account'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowForm(false);
-                  setEditingBank(null);
-                  setFormData({ bankName: '', balance: '', currency: 'EGP' });
-                }}
-                className="flex-1 px-6 py-2.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-all duration-200 font-medium"
-              >
-                Cancel
-              </button>
+                <option value="EGP">Egyptian Pound (EGP)</option>
+                <option value="USD">US Dollar (USD)</option>
+                <option value="EUR">Euro (EUR)</option>
+                <option value="JPY">Japanese Yen (JPY)</option>
+                <option value="GBP">British Pound (GBP)</option>
+              </select>
             </div>
-          </form>
-        </div>
-      )}
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="flex-1 px-6 py-2.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg shadow-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed hover:from-primary-700 hover:to-primary-800 hover:shadow-xl flex items-center justify-center gap-2"
+            >
+              {isSubmitting ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Saving...</span>
+                </>
+              ) : (
+                editingBank ? 'Update Account' : 'Add Account'
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowForm(false);
+                setEditingBank(null);
+                setFormData({ bankName: '', balance: '', currency: 'EGP' });
+              }}
+              className="flex-1 px-6 py-2.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-all duration-200 font-medium"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </FormModal>
 
       {/* Banks List */}
       <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-lg overflow-hidden border border-gray-200 dark:border-gray-700">

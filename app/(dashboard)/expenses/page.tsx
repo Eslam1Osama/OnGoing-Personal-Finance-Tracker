@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { expensesAPI, cashAPI, Expense } from '@/lib/api';
 import InfoModal from '@/components/InfoModal';
+import FormModal from '@/components/FormModal';
+import { validateExpenseForm, validateCashForm, sanitizeInput } from '@/lib/validation';
 
 export default function ExpensesPage() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -58,23 +60,42 @@ export default function ExpensesPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
+    
+    // Sanitize inputs
+    const sanitizedData = {
+      expenseName: sanitizeInput(formData.expenseName),
+      category: sanitizeInput(formData.category),
+      amount: formData.amount.trim(),
+      date: formData.date,
+      notes: sanitizeInput(formData.notes),
+    };
+    
+    // Validate form
+    const validation = validateExpenseForm(sanitizedData);
+    if (!validation.isValid) {
+      setError(validation.error || 'Please check your input');
+      return;
+    }
+    
     try {
       setIsSubmitting(true);
+      setError('');
+      
       if (editingExpense?.id) {
         await expensesAPI.update(editingExpense.id, {
-          expenseName: formData.expenseName,
-          category: formData.category,
-          amount: parseFloat(formData.amount),
-          date: formData.date,
-          notes: formData.notes || undefined,
+          expenseName: sanitizedData.expenseName,
+          category: sanitizedData.category,
+          amount: parseFloat(sanitizedData.amount),
+          date: sanitizedData.date,
+          notes: sanitizedData.notes || undefined,
         });
       } else {
         await expensesAPI.create({
-          expenseName: formData.expenseName,
-          category: formData.category,
-          amount: parseFloat(formData.amount),
-          date: formData.date,
-          notes: formData.notes || undefined,
+          expenseName: sanitizedData.expenseName,
+          category: sanitizedData.category,
+          amount: parseFloat(sanitizedData.amount),
+          date: sanitizedData.date,
+          notes: sanitizedData.notes || undefined,
         });
         // Reload cash balance after expense is added
         await loadData();
@@ -99,9 +120,22 @@ export default function ExpensesPage() {
   const handleCashSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
+    
+    // Sanitize and validate
+    const sanitizedData = {
+      balance: cashFormData.balance.trim(),
+    };
+    
+    const validation = validateCashForm(sanitizedData);
+    if (!validation.isValid) {
+      setError(validation.error || 'Please enter a valid balance');
+      return;
+    }
+    
     try {
       setIsSubmitting(true);
-      await cashAPI.update(parseFloat(cashFormData.balance));
+      setError('');
+      await cashAPI.update(parseFloat(sanitizedData.balance));
       setShowCashForm(false);
       setCashFormData({ balance: '' });
       loadData();
@@ -425,151 +459,213 @@ export default function ExpensesPage() {
         )}
       </div>
 
-      {/* Cash Update Form */}
-      {showCashForm && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Update Cash Balance</h2>
-          <form onSubmit={handleCashSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Current Cash Balance
-              </label>
+      {/* Cash Update Form Modal */}
+      <FormModal
+        isOpen={showCashForm}
+        onClose={() => {
+          setShowCashForm(false);
+          setCashFormData({ balance: '' });
+        }}
+        title="Update Cash Balance"
+        icon={
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+        }
+        maxWidth="md"
+      >
+        <form onSubmit={handleCashSubmit} className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Current Cash Balance <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400 font-medium">E£</span>
               <input
                 type="number"
                 step="0.01"
                 required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                className="w-full pl-10 pr-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+                placeholder="0.00"
                 value={cashFormData.balance}
                 onChange={(e) => setCashFormData({ balance: e.target.value })}
               />
             </div>
-            <div className="flex space-x-3">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                Update
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCashForm(false);
-                  setCashFormData({ balance: '' });
-                }}
-                className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-400 dark:hover:bg-gray-500"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 flex items-center gap-1">
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+              Set your current cash in pocket amount
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="flex-1 px-6 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg shadow-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed hover:from-green-700 hover:to-green-800 hover:shadow-xl flex items-center justify-center gap-2"
+            >
+              {isSubmitting ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Updating...</span>
+                </>
+              ) : (
+                'Update Cash'
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowCashForm(false);
+                setCashFormData({ balance: '' });
+              }}
+              className="flex-1 px-6 py-2.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-all duration-200 font-medium"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </FormModal>
 
-      {/* Add/Edit Expense Form */}
-      {showForm && (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-            {editingExpense ? 'Edit Expense' : 'Add New Expense'}
-          </h2>
-          <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Add/Edit Expense Form Modal */}
+      <FormModal
+        isOpen={showForm}
+        onClose={() => {
+          setShowForm(false);
+          setEditingExpense(null);
+          setFormData({
+            expenseName: '',
+            category: '',
+            amount: '',
+            date: new Date().toISOString().split('T')[0],
+            notes: '',
+          });
+        }}
+        title={editingExpense ? 'Edit Expense' : 'Add New Expense'}
+        icon={
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        }
+        maxWidth="lg"
+      >
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Expense Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+              placeholder="e.g., Grocery Shopping"
+              value={formData.expenseName}
+              onChange={(e) => setFormData({ ...formData, expenseName: e.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Expense Name
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Category <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                value={formData.expenseName}
-                onChange={(e) => setFormData({ ...formData, expenseName: e.target.value })}
+                list="categories"
+                className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+                placeholder="e.g., Food, Transport"
+                value={formData.category}
+                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
               />
+              <datalist id="categories">
+                {categories.map((cat) => (
+                  <option key={cat} value={cat} />
+                ))}
+              </datalist>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Category
-                </label>
-                <input
-                  type="text"
-                  required
-                  list="categories"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                  value={formData.category}
-                  onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                />
-                <datalist id="categories">
-                  {categories.map((cat) => (
-                    <option key={cat} value={cat} />
-                  ))}
-                </datalist>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Amount
-                </label>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Amount <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400 font-medium">E£</span>
                 <input
                   type="number"
                   step="0.01"
                   required
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+                  placeholder="0.00"
                   value={formData.amount}
                   onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                 />
               </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Date
-              </label>
-              <input
-                type="date"
-                required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                value={formData.date}
-                onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Notes (Optional)
-              </label>
-              <textarea
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                rows={3}
-                value={formData.notes}
-                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-              />
-            </div>
-            <div className="flex space-x-3">
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {editingExpense ? 'Update' : 'Add'}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowForm(false);
-                  setEditingExpense(null);
-                  setFormData({
-                    expenseName: '',
-                    category: '',
-                    amount: '',
-                    date: new Date().toISOString().split('T')[0],
-                    notes: '',
-                  });
-                }}
-                className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-400 dark:hover:bg-gray-500"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Date <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="date"
+              required
+              className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+              value={formData.date}
+              onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Notes (Optional)
+            </label>
+            <textarea
+              className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all resize-none"
+              rows={3}
+              placeholder="Additional details about this expense..."
+              value={formData.notes}
+              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+            />
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="flex-1 px-6 py-2.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg shadow-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed hover:from-primary-700 hover:to-primary-800 hover:shadow-xl flex items-center justify-center gap-2"
+            >
+              {isSubmitting ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Saving...</span>
+                </>
+              ) : (
+                editingExpense ? 'Update Expense' : 'Add Expense'
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowForm(false);
+                setEditingExpense(null);
+                setFormData({
+                  expenseName: '',
+                  category: '',
+                  amount: '',
+                  date: new Date().toISOString().split('T')[0],
+                  notes: '',
+                });
+              }}
+              className="flex-1 px-6 py-2.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-all duration-200 font-medium"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </FormModal>
 
       {/* Expenses List */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">

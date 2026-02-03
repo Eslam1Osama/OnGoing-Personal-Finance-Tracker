@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { notesAPI, NotePlan } from '@/lib/api';
 import InfoModal from '@/components/InfoModal';
+import FormModal from '@/components/FormModal';
+import { validateNoteForm, sanitizeInput } from '@/lib/validation';
 
 export default function NotesPage() {
   const [notes, setNotes] = useState<NotePlan[]>([]);
@@ -59,43 +61,55 @@ export default function NotesPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
+    
+    // Sanitize inputs
+    const sanitizedData = {
+      title: sanitizeInput(formData.title),
+      description: sanitizeInput(formData.description),
+      reminderDate: formData.reminderDate,
+      reminderTime: formData.reminderTime,
+      isRecurring: formData.isRecurring,
+      recurrenceType: formData.recurrenceType,
+      reminderEnabled: formData.reminderEnabled,
+      reminderCount: formData.reminderCount,
+      reminderAdvanceDays: formData.reminderAdvanceDays,
+    };
+    
+    // Validate form
+    const validation = validateNoteForm(sanitizedData);
+    if (!validation.isValid) {
+      setError(validation.error || 'Please check your input');
+      return;
+    }
+    
     try {
       setIsSubmitting(true);
-      if (formData.reminderEnabled) {
-        const maxDays = getMaxReminderDays();
-        if (formData.reminderAdvanceDays > maxDays) {
-          setError(`Reminder advance days cannot exceed ${maxDays} days for ${formData.isRecurring ? formData.recurrenceType : 'non-recurring'} notes`);
-          return;
-        }
-        if (!formData.isRecurring) {
-          setError('Reminders can only be enabled for recurring notes');
-          return;
-        }
-      }
+      setError('');
+      
       if (editingNote?.id) {
         await notesAPI.update(editingNote.id, {
-          title: formData.title,
-          description: formData.description,
-          reminderDate: formData.reminderDate,
-          reminderTime: formData.reminderTime,
-          isRecurring: formData.isRecurring,
-          recurrenceType: formData.isRecurring ? formData.recurrenceType : undefined,
-          reminderEnabled: formData.isRecurring && formData.reminderEnabled,
-          reminderCount: formData.isRecurring && formData.reminderEnabled ? formData.reminderCount : undefined,
-          reminderAdvanceDays: formData.isRecurring && formData.reminderEnabled ? formData.reminderAdvanceDays : undefined,
+          title: sanitizedData.title,
+          description: sanitizedData.description,
+          reminderDate: sanitizedData.reminderDate,
+          reminderTime: sanitizedData.reminderTime,
+          isRecurring: sanitizedData.isRecurring,
+          recurrenceType: sanitizedData.isRecurring ? sanitizedData.recurrenceType : undefined,
+          reminderEnabled: sanitizedData.isRecurring && sanitizedData.reminderEnabled,
+          reminderCount: sanitizedData.isRecurring && sanitizedData.reminderEnabled ? sanitizedData.reminderCount : undefined,
+          reminderAdvanceDays: sanitizedData.isRecurring && sanitizedData.reminderEnabled ? sanitizedData.reminderAdvanceDays : undefined,
         });
       } else {
         await notesAPI.create({
-          title: formData.title,
-          description: formData.description,
-          reminderDate: formData.reminderDate,
-          reminderTime: formData.reminderTime,
+          title: sanitizedData.title,
+          description: sanitizedData.description,
+          reminderDate: sanitizedData.reminderDate,
+          reminderTime: sanitizedData.reminderTime,
           status: 'Pending',
-          isRecurring: formData.isRecurring,
-          recurrenceType: formData.isRecurring ? formData.recurrenceType : undefined,
-          reminderEnabled: formData.isRecurring && formData.reminderEnabled,
-          reminderCount: formData.isRecurring && formData.reminderEnabled ? formData.reminderCount : undefined,
-          reminderAdvanceDays: formData.isRecurring && formData.reminderEnabled ? formData.reminderAdvanceDays : undefined,
+          isRecurring: sanitizedData.isRecurring,
+          recurrenceType: sanitizedData.isRecurring ? sanitizedData.recurrenceType : undefined,
+          reminderEnabled: sanitizedData.isRecurring && sanitizedData.reminderEnabled,
+          reminderCount: sanitizedData.isRecurring && sanitizedData.reminderEnabled ? sanitizedData.reminderCount : undefined,
+          reminderAdvanceDays: sanitizedData.isRecurring && sanitizedData.reminderEnabled ? sanitizedData.reminderAdvanceDays : undefined,
         });
       }
       setShowForm(false);
@@ -318,62 +332,80 @@ export default function NotesPage() {
         </div>
       </div>
 
-      {/* Add/Edit Form */}
-      {showForm && (
-        <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-900 rounded-xl shadow-xl p-4 sm:p-6 mb-6 border border-gray-200 dark:border-gray-700">
-          <h2 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white mb-5 sm:mb-6 flex items-center gap-2">
-            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-lg flex items-center justify-center shadow-md">
-              <svg className="w-4 h-4 sm:w-5 sm:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-            </div>
-            {editingNote ? 'Edit Note/Plan' : 'Add New Note/Plan'}
-          </h2>
-          <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Add/Edit Form Modal */}
+      <FormModal
+        isOpen={showForm}
+        onClose={() => {
+          setShowForm(false);
+          setEditingNote(null);
+          setError('');
+          setFormData({
+            title: '',
+            description: '',
+            reminderDate: '',
+            reminderTime: '',
+            isRecurring: false,
+            recurrenceType: 'monthly',
+            reminderEnabled: false,
+            reminderCount: 1,
+            reminderAdvanceDays: 7,
+          });
+        }}
+        title={editingNote ? 'Edit Note/Plan' : 'Add New Note/Plan'}
+        icon={
+          <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        }
+        maxWidth="xl"
+      >
+        <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Title
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Title <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
+                placeholder="e.g., Pay rent, Doctor appointment"
                 value={formData.title}
                 onChange={(e) => setFormData({ ...formData, title: e.target.value })}
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Description
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Description <span className="text-red-500">*</span>
               </label>
               <textarea
                 required
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all resize-none"
                 rows={4}
+                placeholder="Describe the note or plan details..."
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Reminder Date
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Reminder Date <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="date"
                   required
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
                   value={formData.reminderDate}
                   onChange={(e) => setFormData({ ...formData, reminderDate: e.target.value })}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Reminder Time
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Reminder Time (Optional)
                 </label>
                 <input
                   type="time"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                  className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all"
                   value={formData.reminderTime}
                   onChange={(e) => setFormData({ ...formData, reminderTime: e.target.value })}
                 />
@@ -480,19 +512,30 @@ export default function NotesPage() {
                 </div>
               )}
             </div>
-            <div className="flex space-x-3">
+            <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="px-4 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                className="flex-1 px-6 py-2.5 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-lg shadow-lg transition-all duration-200 font-medium disabled:opacity-60 disabled:cursor-not-allowed hover:from-primary-700 hover:to-primary-800 hover:shadow-xl flex items-center justify-center gap-2"
               >
-                {editingNote ? 'Update' : 'Add'}
+                {isSubmitting ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  editingNote ? 'Update Note/Plan' : 'Add Note/Plan'
+                )}
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setShowForm(false);
                   setEditingNote(null);
+                  setError('');
                   setFormData({
                     title: '',
                     description: '',
@@ -505,14 +548,13 @@ export default function NotesPage() {
                     reminderAdvanceDays: 7,
                   });
                 }}
-                className="px-4 py-2 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-400 dark:hover:bg-gray-500"
+                className="flex-1 px-6 py-2.5 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-all duration-200 font-medium"
               >
                 Cancel
               </button>
             </div>
           </form>
-        </div>
-      )}
+      </FormModal>
 
       {/* Notes List */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
