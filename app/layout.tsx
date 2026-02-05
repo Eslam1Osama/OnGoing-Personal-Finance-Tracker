@@ -91,6 +91,21 @@ export default function RootLayout({
                 navigator.serviceWorker.register('/sw.js').then(
                   function(registration) {
                     console.log('ServiceWorker registration successful');
+                    // Ensure we pick up new deployments promptly
+                    try { registration.update(); } catch (e) {}
+
+                    // If a new SW is installed, reload so the user gets the latest code.
+                    registration.onupdatefound = function() {
+                      var installingWorker = registration.installing;
+                      if (!installingWorker) return;
+                      installingWorker.onstatechange = function() {
+                        if (installingWorker.state === 'installed') {
+                          if (navigator.serviceWorker.controller) {
+                            window.location.reload();
+                          }
+                        }
+                      };
+                    };
                   },
                   function(err) {
                     console.log('ServiceWorker registration failed: ', err);
