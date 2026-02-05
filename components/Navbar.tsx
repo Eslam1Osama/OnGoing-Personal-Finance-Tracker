@@ -28,8 +28,8 @@ export default function Navbar() {
     document.documentElement.classList.toggle('dark', newMode);
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     router.push('/login');
   };
 
@@ -88,11 +88,20 @@ export default function Navbar() {
           <div className="flex items-center gap-2 sm:gap-4">
             <button
               onClick={() => setIsMenuOpen((prev) => !prev)}
-              className="lg:hidden p-2 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition-all duration-200"
+              className={`lg:hidden p-2 rounded-xl transition-all duration-200 border ${
+                isMenuOpen
+                  ? 'bg-primary-600/15 border-primary-500/40 ring-2 ring-primary-500/30'
+                  : 'bg-gray-100 dark:bg-gray-800 border-gray-200/80 dark:border-gray-700/80 active:bg-gray-200 dark:active:bg-gray-700 [@media(hover:hover)and(pointer:fine)]:hover:bg-gray-200 dark:[@media(hover:hover)and(pointer:fine)]:hover:bg-gray-700'
+              }`}
               aria-label="Toggle navigation menu"
               aria-expanded={isMenuOpen}
             >
-              <svg className="w-6 h-6 text-gray-700 dark:text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg
+                className={`w-6 h-6 ${isMenuOpen ? 'text-primary-300' : 'text-gray-700 dark:text-gray-200'}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
                 {isMenuOpen ? (
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 ) : (

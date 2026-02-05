@@ -1,58 +1,60 @@
-const USERNAME = 'admin';
-const PASSWORD = 'EslamOsama37752873';
-const SESSION_KEY = 'finance_tracker_session';
+import { invalidateAllCache } from './cache';
 
 export interface Session {
-  username: string;
-  timestamp: number;
+  authenticated: boolean;
+  username?: string;
+  expiresAt?: number;
 }
 
-export function login(username: string, password: string): boolean {
-  if (username === USERNAME && password === PASSWORD) {
-    const session: Session = {
-      username,
-      timestamp: Date.now(),
-    };
-    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    return true;
-  }
-  return false;
+export interface LoginResult {
+  ok: boolean;
+  error?: string;
+  session?: Session;
 }
 
-export function logout(): void {
-  localStorage.removeItem(SESSION_KEY);
-}
-
-export function isAuthenticated(): boolean {
-  if (typeof window === 'undefined') return false;
-  
-  const sessionStr = localStorage.getItem(SESSION_KEY);
-  if (!sessionStr) return false;
-  
+export async function login(username: string, password: string): Promise<LoginResult> {
   try {
-    const session: Session = JSON.parse(sessionStr);
-    // Check if session is valid (24 hours)
-    const maxAge = 24 * 60 * 60 * 1000; // 24 hours
-    if (Date.now() - session.timestamp > maxAge) {
-      logout();
-      return false;
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    const json = (await res.json()) as any;
+    if (!res.ok || !json?.success) {
+      return { ok: false, error: json?.error || 'Invalid username or password' };
     }
-    return session.username === USERNAME;
-  } catch {
-    logout();
-    return false;
+
+    const data = json.data as { username: string; expiresAt: number };
+    return { ok: true, session: { authenticated: true, username: data.username, expiresAt: data.expiresAt } };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Login failed' };
   }
 }
 
-export function getSession(): Session | null {
-  if (typeof window === 'undefined') return null;
-  
-  const sessionStr = localStorage.getItem(SESSION_KEY);
-  if (!sessionStr) return null;
-  
+export async function logout(): Promise<void> {
   try {
-    return JSON.parse(sessionStr) as Session;
+    await fetch('/api/auth/logout', { method: 'POST' });
   } catch {
-    return null;
+    // ignore
+  } finally {
+    // Security: clear cached financial data on logout
+    invalidateAllCache();
   }
+}
+
+export async function getSession(): Promise<Session> {
+  try {
+    const res = await fetch('/api/auth/session', { method: 'GET', cache: 'no-store' });
+    const json = (await res.json()) as any;
+    if (!res.ok || !json?.success) return { authenticated: false };
+    return json.data as Session;
+  } catch {
+    return { authenticated: false };
+  }
+}
+
+export async function isAuthenticated(): Promise<boolean> {
+  const session = await getSession();
+  return Boolean(session.authenticated);
 }

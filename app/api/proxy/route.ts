@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getAuthCookieName, verifySessionToken } from '@/lib/serverAuth';
 
 const GOOGLE_APPS_SCRIPT_URL = process.env.NEXT_PUBLIC_GOOGLE_APPS_SCRIPT_URL || '';
 
@@ -30,6 +31,13 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
   
   try {
+    // Security: require a valid session for all financial data requests
+    const token = request.cookies.get(getAuthCookieName())?.value;
+    const payload = verifySessionToken(token);
+    if (!payload) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     if (!GOOGLE_APPS_SCRIPT_URL) {
       return NextResponse.json(
         { success: false, error: 'Google Apps Script URL not configured' },
@@ -111,6 +119,13 @@ export async function GET(request: NextRequest) {
   const startTime = Date.now();
   
   try {
+    // Security: require a valid session for all financial data requests
+    const token = request.cookies.get(getAuthCookieName())?.value;
+    const payload = verifySessionToken(token);
+    if (!payload) {
+      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    }
+
     if (!GOOGLE_APPS_SCRIPT_URL) {
       return NextResponse.json(
         { success: false, error: 'Google Apps Script URL not configured' },

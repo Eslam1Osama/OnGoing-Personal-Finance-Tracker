@@ -31,22 +31,21 @@ export default function InfoModal({ isOpen, onClose, title, sections }: InfoModa
   const [isAnimating, setIsAnimating] = useState(false);
 
   /**
-   * Clear all focus to prevent stuck highlight states
-   * Focuses body element to ensure no interactive element retains focus
+   * Blur active element (without stealing focus from text inputs).
+   *
+   * On mobile browsers, focusing `body` / refocusing containers can close the
+   * software keyboard or disrupt user interaction. We keep this conservative.
    */
-  const clearAllFocus = useCallback(() => {
-    // First blur current active element
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    // Then explicitly focus body to prevent browser's focus restoration
-    document.body.focus();
-    // Double-ensure by blurring again after a microtask
-    Promise.resolve().then(() => {
-      if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) {
-        document.activeElement.blur();
-      }
-    });
+  const blurActiveNonTextElement = useCallback(() => {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement)) return;
+
+    const tag = active.tagName;
+    const isTextInput =
+      tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || active.isContentEditable;
+
+    if (isTextInput) return;
+    active.blur();
   }, []);
 
   /**
@@ -54,9 +53,9 @@ export default function InfoModal({ isOpen, onClose, title, sections }: InfoModa
    * Clears all focus to prevent "stuck" highlight states on trigger buttons
    */
   const handleClose = useCallback(() => {
-    clearAllFocus();
+    blurActiveNonTextElement();
     onClose();
-  }, [onClose, clearAllFocus]);
+  }, [onClose, blurActiveNonTextElement]);
 
   // Handle ESC key press to close modal
   const handleKeyDown = useCallback(
@@ -97,7 +96,7 @@ export default function InfoModal({ isOpen, onClose, title, sections }: InfoModa
       setIsAnimating(true);
       
       // Immediately blur the trigger button when modal opens
-      clearAllFocus();
+      blurActiveNonTextElement();
       
       // Add keyboard listener
       document.addEventListener('keydown', handleKeyDown);
@@ -107,21 +106,25 @@ export default function InfoModal({ isOpen, onClose, title, sections }: InfoModa
       
       // Focus the modal container for accessibility after animation starts
       const focusTimer = setTimeout(() => {
-        if (modalRef.current) {
-          modalRef.current.focus();
-        }
+        const modalEl = modalRef.current;
+        if (!modalEl) return;
+
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && modalEl.contains(active)) return;
+
+        modalEl.focus();
       }, 100);
 
       return () => {
         clearTimeout(focusTimer);
         document.removeEventListener('keydown', handleKeyDown);
         document.body.style.overflow = 'unset';
-        // Final focus clear when unmounting
-        clearAllFocus();
+        // Final blur to avoid stuck focus highlights (safe for mobile keyboards)
+        blurActiveNonTextElement();
         setIsAnimating(false);
       };
     }
-  }, [isOpen, handleKeyDown, clearAllFocus]);
+  }, [isOpen, handleKeyDown, blurActiveNonTextElement]);
 
   if (!isOpen) return null;
 

@@ -102,6 +102,15 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     },
   });
 
+  if (response.status === 401) {
+    // Session expired/invalid. Clear cached sensitive data and force re-login.
+    invalidateAllCache();
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    throw new Error('Unauthorized');
+  }
+
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`API Error: ${response.statusText} - ${errorText}`);
