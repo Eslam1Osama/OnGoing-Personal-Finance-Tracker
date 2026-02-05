@@ -3,21 +3,15 @@
  * Provides offline capability and caching for the app
  */
 
-const CACHE_NAME = 'ongoing-v1';
-const STATIC_CACHE = 'ongoing-static-v1';
+// Bump version to force clients to refresh cached assets
+const CACHE_VERSION = 'v2';
+const CACHE_NAME = `ongoing-runtime-${CACHE_VERSION}`;
+const STATIC_CACHE = `ongoing-static-${CACHE_VERSION}`;
 
 // Static assets to cache immediately
-const STATIC_ASSETS = [
-  '/',
-  '/login',
-  '/dashboard',
-  '/banks',
-  '/bills',
-  '/expenses',
-  '/notes',
-  '/manifest.json',
-  '/favicon.svg'
-];
+// Cache only truly static assets. Do NOT cache app routes (HTML) to avoid
+// serving stale builds after deployments.
+const STATIC_ASSETS = ['/', '/manifest.json', '/favicon.svg', '/apple-touch-icon.png'];
 
 // Install event - cache static assets
 self.addEventListener('install', (event) => {
@@ -68,16 +62,31 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Never cache navigations (HTML). This prevents stale app code after deploys.
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request).catch(() => {
+        return caches.match('/').then((cachedResponse) => cachedResponse || new Response('Offline', { status: 503 }));
+      })
+    );
+    return;
+  }
+
   event.respondWith(
     // Try network first
     fetch(request)
       .then((response) => {
-        // Clone response to cache
+        // Cache static assets (scripts/styles/images/fonts). Avoid caching HTML.
+        const dest = request.destination;
+        const isCacheableAsset = dest === 'script' || dest === 'style' || dest === 'image' || dest === 'font';
+
         if (response.status === 200) {
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, responseClone);
-          });
+          if (isCacheableAsset) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, responseClone);
+            });
+          }
         }
         return response;
       })
@@ -86,10 +95,6 @@ self.addEventListener('fetch', (event) => {
         return caches.match(request).then((cachedResponse) => {
           if (cachedResponse) {
             return cachedResponse;
-          }
-          // Return offline page for navigation requests
-          if (request.mode === 'navigate') {
-            return caches.match('/');
           }
           return new Response('Offline', { status: 503 });
         });
