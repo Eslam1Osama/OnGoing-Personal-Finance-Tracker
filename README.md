@@ -44,7 +44,8 @@
 | Feature | Description |
 |---------|-------------|
 | **Multi-Currency Support** | Track balances in EGP, USD, EUR, GBP, JPY with live exchange rates |
-| **Smart Bill Management** | Recurring bills with automatic scheduling and email reminders |
+| **Smart Bill Management** | Recurring bills with automatic scheduling, email reminders, and automatic cash deduction |
+| **Automatic Cash Tracking** | Expenses and bill payments automatically update Cash in Pocket (banks remain manual-only) |
 | **Expense Analytics** | Visual charts and category-based expense tracking |
 | **Notes & Plans** | Task management with recurring reminders |
 | **PWA Ready** | Install on mobile devices for native app experience |
@@ -60,17 +61,20 @@
 - Live exchange rate conversion via ExchangeRate-API
 - Total balance calculation across all accounts
 - Visual balance indicators with currency flags
+- **Manual-only updates** — Bank balances are updated only through manual edits (no automatic deductions)
 
 ### 📅 Bills Management
 - Recurring bill scheduling (weekly, monthly, yearly)
 - Smart "Mark as Paid" with automatic next-date generation
-- Email reminders (7 days and 2 days before due)
+- **Automatic cash deduction** — Bill payments automatically reduce Cash in Pocket balance
+- Email reminders (7 days and 2 days before due) with amounts in Egyptian Pounds (EGP)
 - Status tracking (Paid/Unpaid)
 - Due date sorting and filtering
 
 ### 💰 Expenses & Cash
 - Category-based expense tracking
-- Automatic cash balance deduction
+- **Automatic cash balance deduction** — Both expenses and bill payments automatically reduce Cash in Pocket
+- Single source of truth — Cash in Pocket is the only account with automatic balance updates
 - Date range filtering
 - Monthly/category analytics with charts
 - Expense categories: Food, Transport, Bills, Shopping, Entertainment, Health, Other
@@ -341,7 +345,7 @@ All API calls go through `/api/proxy` with the `action` parameter.
 | `createBill` | POST | Create bill |
 | `updateBill` | POST | Update bill |
 | `deleteBill` | POST | Delete bill |
-| `markBillPaid` | POST | Mark bill as paid |
+| `markBillPaid` | POST | Mark bill as paid (automatically deducts amount from Cash in Pocket) |
 | `createExpense` | POST | Create expense |
 | `updateExpense` | POST | Update expense |
 | `deleteExpense` | POST | Delete expense |
